@@ -1,0 +1,20 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.9.1'
+}
+
+application {
+    mainClass = 'com.blt.Main'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
