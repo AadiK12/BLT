@@ -13,21 +13,37 @@ import com.blt.tensor.Tensor;
  */
 public class Linear extends Module {
 
-    private Tensor weights; // Shape: [out_features, in_features]
-    private Tensor bias; // Shape: [out_features]
+    private Tensor weights;
+    private Tensor bias;
 
     public Linear(int inFeatures, int outFeatures) {
-        // TODO: Initialize weights with small random values.
-        // TODO: Initialize bias with zeros.
         this.weights = new Tensor(outFeatures, inFeatures);
-        this.bias = new Tensor(new float[outFeatures]);
-
+        this.weights.fillRandom();
+        this.bias = new Tensor(1, outFeatures);
     }
 
     @Override
     public Tensor forward(Tensor input) {
-        // TODO: Implement y = input * weights^T + bias
-        // Hint: You might need to broadcast the bias addition.
-        return null;
+
+        Tensor output = input.matmul(weights.transpose());
+
+        float[][] outData = output.getData();
+        float[] biasData = bias.getData()[0];
+
+        for (int i = 0; i < output.getData().length; i++) {
+            for (int j = 0; j < biasData.length; j++) {
+                outData[i][j] += biasData[j];
+            }
+        }
+
+        return output;
+    }
+
+    public static void main(String[] args) {
+        System.out.println("Verifying Linear Layer...");
+        Linear linear = new Linear(2, 3);
+        Tensor input = new Tensor(new float[][] { { 1, 2 }, { 3, 4 } });
+        Tensor output = linear.forward(input);
+        System.out.println("Output shape should be 2x3: " + output);
     }
 }

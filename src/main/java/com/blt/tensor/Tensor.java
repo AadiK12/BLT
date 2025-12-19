@@ -1,5 +1,7 @@
 package com.blt.tensor;
 
+import java.util.Random;
+
 public class Tensor {
 
     private float[][] data;
@@ -70,6 +72,15 @@ public class Tensor {
             }
         }
         return new Tensor(res);
+    }
+
+    public void fillRandom() {
+        Random rng = new Random();
+        for (int i = 0; i < rows; i++) {
+            for (int j = 0; j < cols; j++) {
+                this.data[i][j] = (rng.nextFloat() - 0.5f) * 0.1f;
+            }
+        }
     }
 
     // Helper for debugging
