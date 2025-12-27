@@ -2,6 +2,7 @@ package com.blt.transformer;
 
 import com.blt.nn.Module;
 import com.blt.tensor.Tensor;
+import com.blt.nn.Linear;
 
 /**
  * Multi-Head Scaled Dot-Product Attention.
@@ -22,6 +23,10 @@ public class MultiHeadAttention extends Module {
     private int dHead;
 
     // TODO: Define Linear layers for q, k, v, and output.
+    private Linear q;
+    private Linear k;
+    private Linear v;
+    private Linear out;
 
     public MultiHeadAttention(int dModel, int numHeads) {
         this.dModel = dModel;
@@ -29,6 +34,11 @@ public class MultiHeadAttention extends Module {
         this.dHead = dModel / numHeads;
 
         // TODO: Initialize your Linear layers here.
+        this.q = new Linear(dModel, dModel);
+        this.k = new Linear(dModel, dModel);
+        this.v = new Linear(dModel, dModel);
+        this.out = new Linear(dModel, dModel);
+
     }
 
     @Override

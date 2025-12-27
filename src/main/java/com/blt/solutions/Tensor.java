@@ -72,7 +72,6 @@ public class Tensor {
             }
         }
         return new Tensor(res);
-
     }
 
     public void fillRandom() {
