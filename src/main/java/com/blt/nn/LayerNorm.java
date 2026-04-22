@@ -12,27 +12,30 @@ import com.blt.tensor.Tensor;
  */
 public class LayerNorm extends Module {
 
-    private Tensor gamma; // Scale parameter
-    private Tensor beta; // Shift parameter
-    private float epsilon = 1e-5f;
+    private final Tensor gamma;
+    private final Tensor beta;
+    private final float epsilon = 1e-5f;
 
     public LayerNorm(int features) {
-        // TODO: Initialize gamma to ones, beta to zeros.
         this.gamma = new Tensor(1, features);
         this.beta = new Tensor(1, features);
+        this.gamma.fill(1.0f);
     }
 
     @Override
     public Tensor forward(Tensor input) {
-        // TODO: Calculate mean and variance along the last dimension.
-        // TODO: Normalize.
-        // TODO: Apply gamma and beta.
         float[][] x = input.getData();
-        int rows = x.length;
-        int cols = x[0].length;
+        int rows = input.getRows();
+        int cols = input.getCols();
         float[][] out = new float[rows][cols];
         float[] gammaData = gamma.getData()[0];
         float[] betaData = beta.getData()[0];
+
+        if (cols != gamma.getCols()) {
+            throw new IllegalArgumentException(
+                    "LayerNorm expected input width " + gamma.getCols() + " but got " + cols + ".");
+        }
+
         for (int i = 0; i < rows; i++) {
             float sum = 0;
             for (int j = 0; j < cols; j++) {

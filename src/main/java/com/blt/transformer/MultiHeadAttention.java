@@ -18,37 +18,89 @@ import com.blt.nn.Linear;
  */
 public class MultiHeadAttention extends Module {
 
-    private int numHeads;
-    private int dModel;
-    private int dHead;
+    private final int numHeads;
+    private final int dModel;
+    private final int dHead;
 
-    // TODO: Define Linear layers for q, k, v, and output.
-    private Linear q;
-    private Linear k;
-    private Linear v;
-    private Linear out;
+    private final Linear q;
+    private final Linear k;
+    private final Linear v;
+    private final Linear out;
 
     public MultiHeadAttention(int dModel, int numHeads) {
+        if (dModel <= 0 || numHeads <= 0) {
+            throw new IllegalArgumentException("dModel and numHeads must be positive.");
+        }
+        if (dModel % numHeads != 0) {
+            throw new IllegalArgumentException("dModel must be divisible by numHeads.");
+        }
+
         this.dModel = dModel;
         this.numHeads = numHeads;
         this.dHead = dModel / numHeads;
 
-        // TODO: Initialize your Linear layers here.
         this.q = new Linear(dModel, dModel);
         this.k = new Linear(dModel, dModel);
         this.v = new Linear(dModel, dModel);
         this.out = new Linear(dModel, dModel);
-
     }
 
     @Override
     public Tensor forward(Tensor input) {
-        // TODO: 1. Project input to Q, K, V.
-        // TODO: 2. Calculate attention scores.
-        // TODO: 3. Apply causal mask (set future positions to -infinity).
-        // TODO: 4. Softmax.
-        // TODO: 5. Multiply by V.
-        // TODO: 6. Merge heads and project output.
-        return null;
+        if (input.getCols() != dModel) {
+            throw new IllegalArgumentException(
+                    "Attention expected input width " + dModel + " but got " + input.getCols() + ".");
+        }
+
+        Tensor query = q.forward(input);
+        Tensor key = k.forward(input);
+        Tensor value = v.forward(input);
+
+        float[][] qData = query.getData();
+        float[][] kData = key.getData();
+        float[][] vData = value.getData();
+        int seqLen = input.getRows();
+        float[][] context = new float[seqLen][dModel];
+        float scale = (float) (1.0 / Math.sqrt(dHead));
+
+        for (int head = 0; head < numHeads; head++) {
+            int offset = head * dHead;
+
+            for (int position = 0; position < seqLen; position++) {
+                float[] scores = new float[seqLen];
+                float maxScore = Float.NEGATIVE_INFINITY;
+
+                for (int source = 0; source < seqLen; source++) {
+                    if (source > position) {
+                        scores[source] = -1.0e9f;
+                    } else {
+                        float dot = 0.0f;
+                        for (int dim = 0; dim < dHead; dim++) {
+                            dot += qData[position][offset + dim] * kData[source][offset + dim];
+                        }
+                        scores[source] = dot * scale;
+                    }
+
+                    if (scores[source] > maxScore) {
+                        maxScore = scores[source];
+                    }
+                }
+
+                float expSum = 0.0f;
+                for (int source = 0; source <= position; source++) {
+                    scores[source] = (float) Math.exp(scores[source] - maxScore);
+                    expSum += scores[source];
+                }
+
+                for (int source = 0; source <= position; source++) {
+                    float weight = scores[source] / expSum;
+                    for (int dim = 0; dim < dHead; dim++) {
+                        context[position][offset + dim] += weight * vData[source][offset + dim];
+                    }
+                }
+            }
+        }
+
+        return out.forward(new Tensor(context));
     }
 }

@@ -1,7 +1,6 @@
-package com.blt.solutions;
+package com.blt.nn;
 
 import com.blt.tensor.Tensor;
-import com.blt.nn.Module;
 
 /**
  * A Linear (Fully Connected) Layer.
@@ -25,19 +24,12 @@ public class Linear extends Module {
 
     @Override
     public Tensor forward(Tensor input) {
-
-        Tensor output = input.matmul(weights.transpose());
-
-        float[][] outData = output.getData();
-        float[] biasData = bias.getData()[0];
-
-        for (int i = 0; i < output.getData().length; i++) {
-            for (int j = 0; j < biasData.length; j++) {
-                outData[i][j] += biasData[j];
-            }
+        if (input.getCols() != weights.getCols()) {
+            throw new IllegalArgumentException(
+                    "Linear expected input width " + weights.getCols() + " but got " + input.getCols() + ".");
         }
 
-        return output;
+        return input.matmul(weights.transpose()).add(bias);
     }
 
     public static void main(String[] args) {
