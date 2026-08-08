@@ -43,7 +43,7 @@ def build_notebook():
 
 **Project:** Small Byte Latent Transformer from scratch<br>
 **Notebook role:** Research framing, executable concepts, and current-repository audit<br>
-**Last refreshed:** August 6, 2026
+**Last refreshed:** August 7, 2026
 
 This notebook is the durable Stage 1 research companion for the project. It explains what a Byte Latent Transformer (BLT) is, distinguishes it from the byte-level GPT currently in this repository, and turns the most important concepts into small executable demonstrations.
 
@@ -62,6 +62,7 @@ By the end of this notebook, we should be able to answer:
 4. What are the roles of the local encoder, global latent transformer, and local decoder?
 5. What is already implemented in this repository?
 6. What must be built before the project can claim a trainable BLT?
+7. Which BLT claim is both meaningful and supportable at this project's scale?
 """
         ),
         markdown(
@@ -72,6 +73,8 @@ By the end of this notebook, we should be able to answer:
 - It has tensor operations, dense layers, layer normalization, causal multi-head attention, transformer blocks, byte/position embeddings, a 256-byte output head, and greedy generation control flow.
 - It does **not** yet have loss calculation, gradients, an optimizer, a dataset pipeline, checkpointing, or learned generation.
 - It is **not yet a BLT** because it does not group bytes into patches or contain separate local encoder, global patch transformer, and local decoder modules.
+- The strongest feasible research hypothesis is a **matched-patch-budget comparison**: on a controlled mixed-predictability byte corpus, test whether entropy patching lowers held-out bits per byte relative to fixed-stride patching in the same tiny BLT architecture.
+- That statement is a proposed hypothesis, not a result. It becomes claimable only after the architecture, controls, multiple seeds, and falsification criteria in this notebook are satisfied.
 - The next implementation proof remains: make the byte-GPT reproducibly overfit a tiny byte sequence before adding BLT-specific machinery.
 """
         ),
@@ -85,6 +88,9 @@ Primary sources used for this research framing:
 
 - [Byte Latent Transformer: Patches Scale Better Than Tokens](https://arxiv.org/html/2412.09871)
 - [Official `facebookresearch/blt` repository](https://github.com/facebookresearch/blt)
+- [Official BLT forward path at commit `9774ed4f`](https://github.com/facebookresearch/blt/blob/9774ed4fcc78313f9f218295f3d7e4decdadf2ae/bytelatent/model/blt.py#L884-L1049), inspected August 7, 2026
+- [Official patcher implementation at commit `9774ed4f`](https://github.com/facebookresearch/blt/blob/9774ed4fcc78313f9f218295f3d7e4decdadf2ae/bytelatent/data/patcher.py#L508-L620)
+- [Official local encoder and decoder at commit `9774ed4f`](https://github.com/facebookresearch/blt/blob/9774ed4fcc78313f9f218295f3d7e4decdadf2ae/bytelatent/model/local_models.py#L209-L402)
 - [Fast Byte Latent Transformer](https://arxiv.org/abs/2605.08044), treated only as a later extension
 - [`PROJECT_ROADMAP.md`](../PROJECT_ROADMAP.md), the implementation-stage reference for this repository
 
@@ -462,6 +468,212 @@ This reversal is how information is compressed from bytes into patches and then 
         ),
         markdown(
             r"""
+#### 4A. Two sequence clocks: bytes and patches
+
+A BLT runs on two related sequence lengths:
+
+- $N$: the number of byte positions.
+- $P$: the number of patch positions, where normally $P < N$.
+
+The local encoder and decoder operate at the byte clock. The expensive global transformer operates at the patch clock. If the mean patch length is $s=N/P$, then the global transformer sees approximately $1/s$ as many positions as a transformer applied to every byte.
+
+For batch size $B$, byte dimension $d_E$, global dimension $d_G$, and decoder dimension $d_D$, a minimal shape ledger is:
+
+| Representation | Shape | Clock |
+| --- | --- | --- |
+| Byte IDs | $[B,N]$ | Byte |
+| Local encoder states | $[B,N,d_E]$ | Byte |
+| Patch assignments | $[B,N]$ | Byte-to-patch map |
+| Input patch states | $[B,P,d_G]$ | Patch |
+| Global output states | $[B,P,d_G]$ | Patch |
+| Local decoder states | $[B,N,d_D]$ | Byte |
+| Next-byte logits | $[B,N,256]$ | Byte |
+
+The following cell makes that compression explicit for a toy batch. It is a shape calculation, not a model forward pass.
+"""
+        ),
+        code(
+            r"""
+shape_example = {
+    "batch_size": 2,
+    "bytes_per_sequence": 64,
+    "patches_per_sequence": 16,
+    "encoder_dimension": 32,
+    "global_dimension": 128,
+    "decoder_dimension": 32,
+    "byte_vocabulary": 256,
+}
+
+B = shape_example["batch_size"]
+N = shape_example["bytes_per_sequence"]
+P = shape_example["patches_per_sequence"]
+d_encoder = shape_example["encoder_dimension"]
+d_global = shape_example["global_dimension"]
+d_decoder = shape_example["decoder_dimension"]
+vocab_size = shape_example["byte_vocabulary"]
+
+shape_ledger = [
+    ("byte ids", (B, N)),
+    ("local encoder states", (B, N, d_encoder)),
+    ("patch ids", (B, N)),
+    ("input patch states", (B, P, d_global)),
+    ("global output states", (B, P, d_global)),
+    ("local decoder states", (B, N, d_decoder)),
+    ("next-byte logits", (B, N, vocab_size)),
+]
+
+for name, shape in shape_ledger:
+    print(f"{name:<24} {shape}")
+
+average_patch_length = N / P
+global_position_reduction = 1 - P / N
+assert average_patch_length == 4
+assert 0 < P <= N
+
+print(f"\nAverage patch length: {average_patch_length:.1f} bytes")
+print(f"Patch positions versus byte positions: {P}/{N}")
+print(f"Nominal reduction in global sequence positions: {global_position_reduction:.1%}")
+"""
+        ),
+        markdown(
+            r"""
+#### 4B. The patcher is a routing policy, not the language model
+
+The patcher maps byte positions to variable-length groups. In the paper and official code, entropy patching uses a **separate small causal byte model** to estimate uncertainty. Patch boundaries are then computed during data preparation or at runtime; the discrete boundary choice is not simply learned end to end through the main BLT loss.
+
+Important distinctions from the official implementation:
+
+- Entropy is computed from the small model's next-byte distribution.
+- Static, byte, entropy, space, and BPE-derived modes exist in the reference code.
+- A threshold rule can be incremental because each decision uses causal prefix information.
+- Selecting the globally highest-entropy positions to hit an exact patch count is useful offline, but it is not an incremental generation rule because it requires the full sequence.
+- `max_patch_length` is a safety constraint, not the source of dynamic allocation.
+- BLT may use internal special IDs such as beginning/end markers even though raw text itself enters as bytes.
+
+For this project, the first real entropy patcher must satisfy **prefix stability**:
+
+$$
+f_p(x_{<i}) = f_p(x)_{<i}
+$$
+
+Appending future bytes must not change boundaries already chosen for the prefix. A non-incremental patcher would leak future structure into generation and invalidate the experiment.
+"""
+        ),
+        markdown(
+            r"""
+#### 4C. Local encoder: bytes become patch representations
+
+The local encoder is intentionally lighter than the global transformer.
+
+1. Map byte IDs to learned byte embeddings.
+2. Optionally add hashed byte n-gram embeddings. The paper uses byte n-grams to preserve short local patterns without creating a fixed patch vocabulary.
+3. Run causal or local block-causal transformer layers over byte positions.
+4. Initialize patch queries from the byte states in each patch, commonly through pooling.
+5. Cross-attend from patch queries to byte keys/values, restricted by the byte-to-patch mask.
+6. Concatenate or project the resulting local heads into the global model dimension.
+
+The core encoder cross-attention direction is:
+
+$$
+Q = W_q(P_j),\qquad K = W_k(H_i),\qquad V = W_v(H_i)
+$$
+
+where patch $j$ may attend only to byte states assigned to the allowed patch window. The result is one or more learned summaries for each patch rather than a discrete token ID.
+
+For a first tiny BLT, hash n-grams can be deferred. They are a meaningful paper feature, but they are not required to test whether the local/global/local hierarchy and dynamic routing work.
+
+#### 4D. Global latent transformer: expensive computation at the patch clock
+
+The global transformer receives $P$ latent patch states and applies ordinary autoregressive transformer blocks at the larger global dimension. It uses a causal or block-causal mask over patches and is intended to contain most of the model's parameters and FLOPs.
+
+This creates BLT's central systems tradeoff:
+
+```text
+longer patches -> fewer global positions -> less global compute
+shorter patches -> more global positions -> more global compute
+```
+
+That relationship does **not** imply lower end-to-end latency by itself. The local encoder, local decoder, cross-attention, entropy model, padding, and hardware efficiency must also be counted.
+"""
+        ),
+        markdown(
+            r"""
+#### 4E. Local decoder: global patch context returns to bytes
+
+The decoder begins from byte-level states produced by the encoder. It injects global information either by gathering/broadcasting a patch state or by cross-attending from byte queries to patch keys and values, then runs lightweight causal byte-level transformer layers and projects to byte logits.
+
+The decoder cross-attention direction is the reverse of the encoder:
+
+$$
+Q = W_q(D_i),\qquad K = W_k(O_j),\qquad V = W_v(O_j)
+$$
+
+The subtle requirement is **causal alignment**. A global representation that already contains all bytes in patch $j$ cannot be used to predict those same bytes. Conceptually, the state produced from patch $j$ conditions decoding of the following patch. The official forward path constructs shifted decoder patch IDs before mapping global states back to byte positions.
+
+The next cell illustrates this conceptual shift without reproducing the reference implementation's special-token bookkeeping.
+"""
+        ),
+        code(
+            r"""
+conceptual_patches = [b"BLT", b" uses", b" bytes"]
+
+print("Patch | Bytes  | Global state used while decoding")
+print("------|--------|---------------------------------")
+for patch_index, patch in enumerate(conceptual_patches):
+    visible = visible_patch(patch)
+    conditioning_state = "initial/BOE state" if patch_index == 0 else f"output of patch {patch_index - 1}"
+    print(f"{patch_index:>5} | {visible:<6} | {conditioning_state}")
+
+assert b"".join(conceptual_patches) == b"BLT uses bytes"
+"""
+        ),
+        markdown(
+            r"""
+#### 4F. Training objective, metrics, and causal invariants
+
+The end-to-end model still optimizes next-byte cross-entropy. If total negative log-likelihood is measured in natural-log units, tokenizer-independent bits per byte is:
+
+$$
+\operatorname{BPB}(x)=\frac{\mathcal{L}_{CE}(x)}{\ln(2)\,n_{bytes}}
+$$
+
+Any architecture experiment must pass these invariants before its quality result is trusted:
+
+- Patch lengths sum to the number of encoded byte positions, including documented special-token handling.
+- Boundary decisions are prefix-stable during autoregressive generation.
+- Local byte self-attention cannot see future bytes.
+- Encoder cross-attention sees only bytes allowed by its patch/window mask.
+- The global transformer cannot see future patches.
+- Decoder byte positions receive only causally prior global patch information.
+- Changing future bytes does not change logits for earlier positions.
+- The model can overfit a tiny sequence and reproduce logits after checkpoint reload.
+
+#### 4G. What will count as a "tiny BLT" in this project?
+
+Required before making a BLT claim:
+
+- Raw byte input and 256-way next-byte output.
+- An explicit patcher and byte-to-patch mapping.
+- A lightweight local byte encoder.
+- Learned or clearly specified byte-to-patch aggregation.
+- A causal global transformer operating on patch states.
+- A lightweight local decoder with correct shifted patch conditioning.
+- End-to-end next-byte training and held-out BPB evaluation.
+
+Permissible first-version simplifications, if disclosed:
+
+- Fixed patching before entropy patching.
+- Mean/max pooling before encoder cross-attention.
+- No hash n-gram embeddings.
+- One encoder and decoder layer.
+- Small dimensions and short contexts.
+- Analytical compute accounting before optimized kernels.
+
+These simplifications support a claim about **this tiny BLT implementation**, not a reproduction of Meta's scaling result.
+"""
+        ),
+        markdown(
+            r"""
 ### 5. Audit the current repository
 
 The next cells inspect the source tree and perform a clean temporary Java compilation. This keeps the status assessment tied to the code that is actually present when the notebook runs.
@@ -556,18 +768,175 @@ The label `complete blt` in the earlier commit history should therefore be inter
         ),
         markdown(
             r"""
-### 6. Separate paper claims from project hypotheses
+### 6. Turn the architecture into testable claims
 
-| Topic | Paper-level finding or design | What this project can responsibly test |
+A legitimate project claim needs four properties:
+
+1. **The model under test is actually a BLT:** it has the local encoder, patch-level global transformer, shifted local decoder, and end-to-end next-byte training described above.
+2. **The comparison isolates one change:** patching policy changes while architecture, data, optimization, and evaluation remain matched.
+3. **The metric matches the statement:** BPB supports language-model quality claims; patch counts support global-position claims; wall-clock time supports speed claims.
+4. **The wording stays inside the tested population:** a tiny model on a controlled corpus cannot establish billion-parameter scaling or general robustness.
+
+#### Claim ladder
+
+| Candidate claim | Feasible here? | Scientific value | Decision |
+| --- | --- | --- | --- |
+| The hierarchy uses fewer global positions than a byte-GPT when average patch length is greater than one | Yes | Low; largely mechanical | Use as an implementation check |
+| Entropy patching creates more global steps in high-uncertainty regions | Yes | Limited; partly true by construction | Use as a mechanism diagnostic |
+| At matched average patch length, entropy patching lowers held-out BPB versus fixed-stride patching in the same tiny BLT | Yes, after Stage 6 | Meaningful and falsifiable | **Recommended primary claim** |
+| Decoder cross-attention lowers BPB versus simple patch-state broadcasting | Yes, after the primary model works | Useful architecture ablation | Recommended secondary claim |
+| A tiny BLT is more robust than a BPE model to arbitrary noise | Not yet | Potentially meaningful | Requires a matched tokenizer baseline and a defined corruption protocol |
+| This implementation is faster end to end | Not from patch counts alone | Misleading without optimized kernels | Do not claim from the first prototype |
+| BLT matches token models at scale or uses 50% fewer inference FLOPs | No | Outside available scale | Do not claim |
+"""
+        ),
+        markdown(
+            r"""
+#### Recommended primary hypothesis
+
+> **Proposed H1:** On a controlled corpus containing both predictable and structurally complex byte regions, our tiny entropy-patched BLT will achieve lower mean held-out bits per byte than an architecturally identical fixed-stride BLT when the two conditions are matched within 2% on average patch length and are trained with the same parameterization, raw-byte context, training bytes, optimizer settings, data order, and paired random seeds.
+
+This wording is intentionally narrow:
+
+- It says **our tiny BLT**, not BLT in general.
+- It says **held-out BPB**, not intelligence or downstream quality.
+- It matches **average patch length**, which approximates equal global sequence positions.
+- It does not call the conditions equal in end-to-end compute because the entropy model has an extra cost.
+- It can fail. A null or reversed result is informative.
+
+#### Evidence threshold before using affirmative language
+
+- Commit or tag this design, dataset protocol, seed list, and analysis rule before running the comparison; only then call it pre-registered.
+- At least 8 paired initialization/data-order seeds.
+- Mean entropy-minus-fixed BPB difference is negative.
+- A pre-specified 95% paired bootstrap confidence interval lies below zero.
+- Relative BPB improvement is at least 0.5%, our proposed practical-effect threshold.
+- Average patch length differs by no more than 2% between conditions on the evaluation set.
+- Causal, checkpoint, and data-leakage validation gates all pass.
+
+If these conditions do not hold, the correct conclusion is: **"This experiment did not provide evidence that entropy patching improved held-out BPB under the tested conditions."**
+"""
+        ),
+        code(
+            r"""
+def bits_per_byte(total_negative_log_likelihood_nats: float, total_bytes: int) -> float:
+    if total_bytes <= 0:
+        raise ValueError("total_bytes must be positive")
+    return total_negative_log_likelihood_nats / (math.log(2) * total_bytes)
+
+
+# A uniform distribution over 256 byte values has -log p = log(256) nats per byte.
+uniform_baseline_bpb = bits_per_byte(math.log(256) * 100, 100)
+assert math.isclose(uniform_baseline_bpb, 8.0, rel_tol=1e-12)
+
+print(f"Uniform 256-byte baseline: {uniform_baseline_bpb:.1f} BPB")
+print("Primary experiment status: PROPOSED PRE-REGISTRATION — freeze before training; no BLT result exists yet.")
+"""
+        ),
+        markdown(
+            r"""
+#### Experimental contract
+
+##### Model conditions
+
+| Component | Fixed condition | Entropy condition |
 | --- | --- | --- |
-| Tokenizer-free modeling | BLT learns from raw bytes without a fixed patch vocabulary | Confirm that all project inputs and targets are byte values |
-| Dynamic compute | Entropy patching allocates more global steps around difficult predictions | Visualize boundaries and count patch/global positions |
-| Scaling | The paper reports favorable controlled scaling at up to billions of parameters | **Cannot be reproduced at tiny local scale** |
-| Inference efficiency | Longer patches reduce expensive global transformer steps | Measure step counts, then local wall-clock behavior with caveats |
-| Robustness | The paper reports improvements on noise and character-sensitive tasks | Run small controlled corruption tests without generalizing broadly |
-| Cross-attention | Local modules move information between byte and patch representations | Verify shapes, masks, causality, and end-to-end learning |
+| Local encoder | Identical | Identical |
+| Global transformer | Identical | Identical |
+| Local decoder | Identical | Identical |
+| Parameters and initialization | Paired by seed | Paired by seed |
+| Raw-byte context length | Identical | Identical |
+| Training bytes and order | Identical | Identical |
+| Optimization schedule | Identical | Identical |
+| Maximum patch length | Identical | Identical |
+| Patching policy | Fixed stride | Causal entropy threshold |
+| Average patch length | Target value | Calibrated within 2% of target |
 
-This table is a guardrail: local observations should be reported as local observations, not as confirmation of large-scale paper claims.
+The entropy estimator is trained on the training split only and then frozen. Its threshold is selected on a calibration subset drawn from training data, never from the test set. Entropy-model parameters and patching FLOPs are reported separately rather than silently excluded.
+
+##### Data plan
+
+Use two phases:
+
+1. **Controlled corpus:** generated from a documented grammar with repetitive low-uncertainty spans and learnable, structurally complex transitions. This tests the mechanism under known conditions.
+2. **Small public corpus replication:** a fixed public-domain or permissively licensed byte corpus split by document. This checks whether the direction survives outside the synthetic construction.
+
+Do not mix duplicate templates or contiguous document fragments across train, validation, and test splits. Record exact corpus-generation code, source version, byte counts, and split hashes.
+
+##### Primary metric
+
+Corpus-level held-out BPB:
+
+$$
+\frac{\sum_i \operatorname{NLL}_i}{\ln(2)\sum_i n_{bytes,i}}
+$$
+
+Compute this from total negative log-likelihood divided by total bytes. Do not average already-averaged batch BPB values when batch sizes or sequence lengths differ.
+
+##### Secondary diagnostics
+
+- Patch count and average patch length.
+- Patch-length distribution and maximum-length truncation rate.
+- Global transformer positions per byte.
+- BPB by region type and entropy decile.
+- Analytical FLOPs per byte for local encoder, global transformer, local decoder, cross-attention, and entropy model.
+- Wall-clock training and inference time, labeled exploratory until kernels are comparable.
+- Failure rate, NaNs, and run completion by seed.
+
+##### Required result table grain
+
+Store one row per `model_condition × seed × evaluation_split`, with:
+
+```text
+git_commit
+dataset_version
+condition
+seed
+parameter_count
+training_bytes_seen
+total_nll_nats
+evaluated_bytes
+bpb
+patch_count
+average_patch_length
+global_positions_per_byte
+estimated_flops_per_byte
+entropy_model_flops_per_byte
+elapsed_seconds
+```
+"""
+        ),
+        markdown(
+            r"""
+#### Threats to validity and falsification rules
+
+| Risk | Why it matters | Required control |
+| --- | --- | --- |
+| Test-set threshold tuning | Leaks evaluation information into patch boundaries | Calibrate on training-only data and freeze |
+| Unequal raw-byte context | One model may simply see more source information | Fix bytes per example, not only patches per example |
+| Unequal patch budget | Quality difference may come from more global steps | Match average patch length within the declared tolerance |
+| Averaging batch losses | Can weight short and long batches incorrectly | Aggregate total NLL and total bytes |
+| Seed cherry-picking | Tiny models can have high variance | Freeze the seed list before training and report every paired seed |
+| Entropy-model overhead omitted | Turns a routing result into a false efficiency result | Report patcher parameters and FLOPs separately |
+| Causal leakage | Can create deceptively excellent BPB | Prefix, mask, and future-byte perturbation tests |
+| Synthetic-only result | May reflect the data generator rather than BLT generally | Keep the claim corpus-specific and attempt a public-corpus replication |
+| Naive wall-clock comparison | Java/Python kernels and shapes may dominate timing | Treat timing as exploratory until implementation paths are comparable |
+
+Falsification rules to freeze before the experiment:
+
+- If the BPB interval crosses zero, H1 is not supported.
+- If the practical improvement is below 0.5%, report it as statistically possible but practically inconclusive.
+- If patch-length matching fails, the comparison is invalid and must be rerun.
+- If any causal leakage test fails, discard all quality results from that implementation.
+- Report negative, null, and failed-seed outcomes; do not select only successful runs.
+
+#### Claim language after the experiment
+
+If supported, use language like:
+
+> "Across the pre-registered paired seeds on dataset X, the entropy-patched tiny BLT reduced held-out BPB by Y relative to the matched fixed-patch model at average patch lengths A and B. The paired 95% interval was [L, U]. This result is limited to the tested architecture, corpus, and compute regime."
+
+Avoid `proves`, `BLTs are faster`, `matches token models`, `scales better`, or `is more robust` unless the corresponding design and measurements were actually run.
 """
         ),
         markdown(
@@ -580,10 +949,14 @@ This table is a guardrail: local observations should be reported as local observ
 - [x] Explain why a byte-level GPT is not automatically a BLT.
 - [x] Identify the local encoder, global transformer, and local decoder.
 - [x] Explain encoder and decoder cross-attention direction.
+- [x] Explain the byte and patch sequence clocks and their tensor shapes.
+- [x] Document decoder patch shifting and the causal leakage risk.
 - [x] Demonstrate fixed and whitespace-like patching.
 - [x] Demonstrate the mechanics of entropy-based boundaries with a clearly labeled toy model.
 - [x] Audit the current repository against the target architecture.
 - [x] Separate paper claims from locally testable hypotheses.
+- [x] Select a primary falsifiable BLT hypothesis and define its controls.
+- [x] Define the evidence threshold and required non-claim outcomes.
 - [ ] Decide whether the trainable implementation will use custom Java gradients or PyTorch autograd.
 - [ ] Add a concise architecture summary and notebook link to the root README.
 
@@ -592,6 +965,7 @@ This table is a guardrail: local observations should be reported as local observ
 - UTF-8 byte length is shown separately from character length.
 - Patch statistics reconcile back to the original byte count.
 - Entropy boundaries obey minimum and maximum patch sizes.
+- The uniform 256-byte prediction baseline reconciles to 8 BPB.
 - The repository is inspected from disk rather than described only from cached notes.
 - Java compilation occurs in a temporary directory.
 - The expected `3 x 256` GPT output shape is asserted.
@@ -616,6 +990,10 @@ Recommended order:
 7. Add deterministic temperature and top-k sampling.
 8. Build the simple generation/inspection UI.
 9. Only then implement fixed patches and the local/global/local BLT hierarchy.
+10. Validate causal shifting and overfit the fixed-patch BLT.
+11. Train and freeze the entropy estimator using training data only.
+12. Calibrate entropy thresholds to the fixed model's average patch length.
+13. Run the pre-registered paired-seed comparison and report all outcomes.
 
 ### Why this order matters
 
@@ -639,6 +1017,8 @@ If patching is added before the baseline can learn, failures could come from ten
 | Cross-attention | Attention where queries come from one representation level and keys/values from another |
 | Bits per byte | Byte-language-model loss expressed in base-2 information units |
 | Incremental patching | Boundary decisions for a prefix do not depend on future, unseen bytes |
+| Patch budget | The number of patch/global positions used for a fixed number of raw bytes |
+| Paired seed | The same initialization/data-order seed used across two experimental conditions |
 """
         ),
         markdown(
@@ -649,6 +1029,8 @@ If patching is added before the baseline can learn, failures could come from ten
 - The toy bigram entropy model is intentionally weak. A real BLT entropy model uses substantially richer context.
 - Counting patches estimates how often the global model runs, not full system performance.
 - A tiny project may expose architectural behavior without showing the quality/efficiency crossover reported at large scale.
+- The recommended claim is a proposed preregistration. It is not pre-registered until the design is committed or tagged before any comparison result is observed.
+- The official implementation details were inspected at commit `9774ed4fcc78313f9f218295f3d7e4decdadf2ae`; future code changes may differ.
 - The later Fast BLT work explores generating multiple bytes per expensive model invocation. It should remain out of scope until the original autoregressive BLT is implemented and measured.
 """
         ),
@@ -658,12 +1040,15 @@ If patching is added before the baseline can learn, failures could come from ten
 
 1. Pagnoni, A. et al. [*Byte Latent Transformer: Patches Scale Better Than Tokens*](https://arxiv.org/html/2412.09871).
 2. Meta Research. [`facebookresearch/blt`](https://github.com/facebookresearch/blt), official research code.
-3. Kallini, J. et al. [*Fast Byte Latent Transformer*](https://arxiv.org/abs/2605.08044), optional future research direction.
-4. Project implementation plan: [`PROJECT_ROADMAP.md`](../PROJECT_ROADMAP.md).
+3. Meta Research. [BLT forward path](https://github.com/facebookresearch/blt/blob/9774ed4fcc78313f9f218295f3d7e4decdadf2ae/bytelatent/model/blt.py#L884-L1049), pinned code snapshot.
+4. Meta Research. [Patcher implementation](https://github.com/facebookresearch/blt/blob/9774ed4fcc78313f9f218295f3d7e4decdadf2ae/bytelatent/data/patcher.py#L508-L620), pinned code snapshot.
+5. Meta Research. [Local encoder and decoder implementation](https://github.com/facebookresearch/blt/blob/9774ed4fcc78313f9f218295f3d7e4decdadf2ae/bytelatent/model/local_models.py#L209-L402), pinned code snapshot.
+6. Kallini, J. et al. [*Fast Byte Latent Transformer*](https://arxiv.org/abs/2605.08044), optional future research direction.
+7. Project implementation plan: [`PROJECT_ROADMAP.md`](../PROJECT_ROADMAP.md).
 
 ---
 
-**Stage 1 handoff:** The conceptual boundary is now explicit. The repository currently implements a byte-GPT forward baseline; the next proof is learning, and the later BLT proof is patch-based global computation with local byte encoding and decoding.
+**Stage 1 handoff:** The architecture boundary and primary research hypothesis are now explicit. The repository currently implements a byte-GPT forward baseline; the next proof is learning. Once the tiny BLT exists, the first research comparison is entropy versus fixed patching at matched average patch length, evaluated with held-out BPB and paired seeds.
 """
         ),
     ]
