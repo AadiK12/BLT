@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blt-mlx-lab"
+version = "0.2.0"
+description = "Trainable MLX foundations for the Byte Latent Transformer learning project"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+apple = [
+    "mlx==0.32.0",
+]
+dev = [
+    "pytest==9.1.1",
+    "ruff==0.15.22",
+]
+
+[project.scripts]
+blt-phase2 = "blt_mlx.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["python"]
+include = ["blt_mlx*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["B", "C4", "E", "F", "I", "N", "SIM", "UP", "W"]
+ignore = ["E501"]

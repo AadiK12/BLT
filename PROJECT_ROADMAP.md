@@ -32,26 +32,24 @@ The primary research references are:
 
 ## Current project status
 
-Last verified: **August 10, 2026**
+Last verified: **August 11, 2026**
 
 Current repository state:
 
 - Branch: `main`
-- The `main` branch tip matched `origin/main` at verification time.
-- Latest committed revision: `0ded4c1` (`simple fun UI`, August 10, 2026).
-- The working tree also contains an uncommitted visualizer refactor from Manim-rendered MP4s to a live in-page Gradio animation, plus this roadmap refresh.
-- The Java source compiles with Java 22 using `javac -d <temporary-directory> @sources.txt`.
-- The console demonstration runs successfully and produces `Tensor(3x256)` GPT logits.
-- The executed Stage 1 research notebook contains 37 cells, including 10 sequentially executed code cells with no saved error outputs.
-- The current working-tree patching lab has a documented live in-page Gradio workflow and nine passing unit tests.
-- The model can perform a forward pass and produce byte logits.
-- The model cannot train, save learned weights, or generate meaningful learned text.
+- The deterministic Java reference builds and tests through the pinned Gradle 8.10.2 wrapper; 12 JUnit tests cover tensor math, normalization, initialization, model shape, and causal behavior.
+- The self-contained Python/MLX path trains a byte-level GPT on the Apple GPU, saves model and optimizer state, reloads exact logits, resumes the optimizer step, and generates bytes with greedy, temperature, or top-k decoding.
+- Twelve Python tests cover pure references, custom Metal forward/backward behavior, model determinism and causality, checkpoint/resume, shape-derived comparisons, and generation metrics.
+- The verified 80-step tiny-corpus smoke run reduced loss from 6.09 to 0.63 and evaluation bits per byte from 8.86 to 0.98.
+- Performance infrastructure traces training, prefill, and decode shapes; runs balanced interleaved MLX-versus-Metal comparisons; gates on complete-output correctness, median, and p95; and records environment and memory.
+- Checkpoint-level measurement exposes TTFT, TPOT, end-to-end latency, bytes per second, peak memory, and windowed thermal-soak plumbing.
+- The Stage 1 notebook and separate Gradio patching lab remain the research and visualization surfaces.
 - The patching lab can visualize fixed, whitespace-like, and toy bigram-entropy boundaries, but no learned latent patching or BLT-specific local/global model architecture is implemented.
-- The Gradle wrapper, deterministic Java initialization, Java correctness tests, and repository cleanup remain incomplete; generated Gradle/build/class artifacts are still tracked.
+- Generated Gradle/build/class artifacts and notebook checkpoints have been removed from source tracking and are ignored.
 
 The most accurate description is:
 
-> The research framing is substantially complete, while the Java foundations and byte-GPT baseline remain partial. The repository has a runnable, forward-only byte-level GPT and an educational patch-routing visualizer, but it does not yet have training, learned generation, or a true Byte Latent Transformer.
+> The research framing and Phase 2 foundation are complete. The repository now has a deterministic, trainable, checkpointed MLX byte-GPT baseline plus a tested Java reference and hardware-aware measurement harness. It still does not have the local/global/local latent-patch hierarchy required to call the model a Byte Latent Transformer.
 
 ### Current architecture
 
@@ -79,11 +77,11 @@ The distinction matters: processing raw bytes does not by itself make a model a 
 
 | Stage | Status | Main finish line |
 | --- | --- | --- |
-| 1. Research framing | Substantially complete | Add the concise root-README architecture summary and finalize the training implementation decision |
-| 2. Tensor and neural-network foundations | Partial; manually verified | Add deterministic initialization, automated Java tests, a reproducible build, and repository cleanup |
-| 3. Byte-GPT forward model | Runnable; baseline incomplete and untrained | Make the baseline deterministic, tested, configurable, and reproducible |
-| 4. Training system | Not started | The model learns from text and saves checkpoints |
-| 5. Tiny trained model and UI | Not started; educational patching UI exists | Learned text can be generated and inspected in a browser |
+| 1. Research framing | Complete | Keep claims and references current as implementation evolves |
+| 2. Tensor and neural-network foundations | Complete | Preserve correctness gates while extending the kernel experiments |
+| 3. Byte-GPT forward model | MLX baseline complete; Java reference complete for forward learning | Freeze a research-sized configuration and parameter-count report |
+| 4. Training system | Tiny deterministic path works; research pipeline partial | Add frozen datasets/splits, hashes, longer configs, and validation reporting |
+| 5. Tiny trained model and UI | Checkpoint exists; trained-model UI not started | Load the learned checkpoint in a browser and expose byte-level inspection |
 | 6. Actual BLT architecture | Not started; toy patch routing only | Bytes are dynamically grouped into learned latent patches and processed by the local/global/local hierarchy |
 | 7. Experiments and conclusions | Designed; execution not started | Freeze the protocol and seed list, run the controlled comparisons, and report the evidence |
 
@@ -115,9 +113,10 @@ The current implementation is the second system. The eventual research target is
 
 ## What remains
 
-- Add a concise current-versus-target architecture summary and a direct notebook link to the root `README.md`.
-- Finalize whether the trainable implementation will use custom Java gradients or PyTorch autograd. The recommendation remains to preserve Java as the forward-pass learning artifact and use PyTorch for the trainable research model.
 - Freeze an exact dataset protocol, seed list, and analysis rule before calling the Stage 7 comparison pre-registered.
+- Keep the notebook's architecture description synchronized with the implemented fixed-patch and entropy-patch systems when those stages begin.
+
+The training decision is now final: preserve Java as the explicit forward-pass learning artifact and use Python/MLX as the Apple-Silicon-native trainable research path. MLX provides arrays and automatic differentiation; this project owns the architecture, data ordering, training/checkpoint contracts, experiments, and UI.
 
 ## Research questions
 
@@ -159,127 +158,51 @@ Establish a mathematical foundation that is correct, reproducible, and capable o
 
 ## What exists now
 
-The custom [`Tensor`](src/main/java/com/blt/tensor/Tensor.java) supports:
+Phase 2 has two complementary tracks:
 
-- Two-dimensional `float` storage.
-- Matrix multiplication.
-- Element-wise addition and subtraction.
-- Row-vector bias broadcasting.
-- Scalar multiplication.
-- Transposition.
-- Row-wise softmax.
-- Random and constant initialization.
+- The Java reference keeps matrix multiplication, broadcasting, softmax, layer normalization, linear layers, attention, and transformer blocks explicit for learning. Initialization is seeded and 12 JUnit tests cover known values, invalid shapes, normalization, determinism, logits, and causal prefix invariance.
+- The Python/MLX path is the trainable Apple-Silicon implementation. It includes pure-Python scalar references, MLX primitives, handwritten Metal candidates, explicit model modules, deterministic data, automatic differentiation, AdamW, SafeTensors checkpoints, generation, shape tracing, and performance reports.
 
-The repository also implements:
+The hardware-aware strategies are configurable rather than hard-wired:
 
-- [`Linear`](src/main/java/com/blt/nn/Linear.java)
-- [`LayerNorm`](src/main/java/com/blt/nn/LayerNorm.java)
-- GELU activation inside [`Block`](src/main/java/com/blt/transformer/Block.java)
+| Decision | Available choices |
+| --- | --- |
+| Precision | float32, float16, bfloat16 through MLX; float32/float16 for custom Metal |
+| Matrix multiplication | MLX, naive Metal, tiled-16 Metal |
+| Bias and activation | eager MLX, compiled MLX, fused Metal bias+GELU |
 
-These operations compiled and produced the expected shapes and smoke-test values during the August 10, 2026 verification.
+See [`docs/PHASE2_INFRASTRUCTURE.md`](docs/PHASE2_INFRASTRUCTURE.md) for the component map, promotion contract, commands, metrics, and verified evidence.
 
 ## What remains
 
-### Automated correctness tests
+The Phase 2 exit criteria are satisfied. Future foundation work is experimental extension rather than missing infrastructure:
 
-Add tests for:
+- Add more Metal tile sizes and threadgroup configurations behind the same strategy contract.
+- Study SIMD-group reductions where attention or normalization traces justify them.
+- Expand precision studies without silently routing bfloat16 into a float16 custom kernel.
+- Run longer, controlled thermal experiments with power and ambient observations.
+- Continue to treat MLX as the baseline and promote only shape-specific, numerically valid wins.
 
-- Matrix multiplication against known values.
-- Invalid matrix shapes.
-- Bias broadcasting.
-- Element-wise operations.
-- Transposition.
-- Numerically stable softmax.
-- Softmax rows summing to approximately one.
-- Layer normalization producing approximately zero mean and unit variance before affine scaling.
-- Linear-layer output dimensions.
-- Causal attention preventing future input positions from affecting earlier outputs.
-- Invalid model configurations and sequence lengths.
+## Implementation decision: what "from scratch" means here
 
-### Deterministic initialization
+The decision is now implemented:
 
-The current `fillRandom()` method creates an unseeded `Random`, so every model instance differs.
-
-Add:
-
-- A project-level random seed.
-- Seeded parameter initialization.
-- A model configuration that records the seed.
-- Tests that reproduce identical initial weights and logits.
-
-### Repository and build hygiene
-
-The repository now has a `.gitignore` for editor and Python outputs. It still needs:
-
-- A Gradle wrapper (`gradlew`, `gradlew.bat`, and wrapper files).
-- Java/Gradle entries in `.gitignore`.
-- A clean separation between source and generated files.
-- Removal of tracked `.class`, `build/`, and `.gradle/` artifacts.
-- Removal of the tracked notebook checkpoint and an `.ipynb_checkpoints/` ignore rule.
-- Clarification or removal of the duplicate `solutions` package.
-- A single authoritative build and test command.
-
-### Training support
-
-The current tensor stores values but does not support:
-
-- Gradients.
-- A computation graph.
-- Backward functions.
-- Trainable parameter registration.
-- Optimizer state.
-
-This is the major decision point before Stage 4.
-
-## Implementation decision: what does "from scratch" mean?
-
-### Option A: Architecture from scratch
-
-Use a standard tensor/autograd library such as PyTorch, but implement the model architecture, patcher, attention structure, training loop, evaluation, and UI logic directly.
-
-Advantages:
-
-- Keeps the project focused on BLT research.
-- Makes attention and patching experiments much faster.
-- Provides reliable gradients, batching, and device execution.
-- Makes a small Gradio UI straightforward.
-
-Tradeoff:
-
-- The tensor engine and automatic differentiation are not built from scratch.
-
-### Option B: Numerical engine from scratch in Java
-
-Continue the existing Java implementation and add either:
-
-- A general automatic-differentiation engine, or
-- Explicit backward passes for every operation and layer.
-
-Advantages:
-
-- Provides a deep understanding of forward and backward mechanics.
-- Preserves the current implementation language and style.
-
-Tradeoff:
-
-- A large portion of the work becomes gradient-engine development rather than BLT research.
-- Attention, layer normalization, and cross-attention backward passes will be substantial and error-prone.
-
-### Recommended boundary
-
-Preserve the current Java code as the forward-pass learning artifact, and implement the trainable experimental model using PyTorch. In that track, the BLT architecture remains from scratch even though tensor gradients come from the framework.
-
-This is a recommendation, not a prerequisite. The pure-Java path remains valid if learning automatic differentiation is itself a project goal.
+- Java owns the explicit forward-reference mechanics.
+- Python/MLX owns the trainable and measurable research system on Apple Silicon.
+- MLX provides storage, lazy execution, autodiff, and optimizer primitives.
+- This repository owns deterministic initialization, layers and attention composition, byte-level model architecture, patch architecture when added, data contracts, training loop, checkpoint schema, generation, metrics, and experiments.
+- Handwritten Metal is used only where it teaches a mechanism or passes the evidence gate; replacing all MLX primitives is not a project goal.
 
 ## Completion criteria
 
 Stage 2 is complete when:
 
-- Mathematical operations have automated tests.
-- Initialization is deterministic.
-- The project builds and tests from a clean checkout.
-- Generated files are not tracked as source.
-- The training implementation path is explicitly chosen.
+- [x] Mathematical operations have automated tests.
+- [x] Initialization is deterministic.
+- [x] The project builds and tests through pinned `uv` and Gradle entrypoints.
+- [x] Generated files are not tracked as source.
+- [x] The training implementation path is explicitly chosen and exercised.
+- [x] Hardware-aware candidates have backward/correctness checks and a conservative promotion gate.
 
 ---
 
@@ -290,6 +213,8 @@ Stage 2 is complete when:
 Build a conventional byte-level language model that can serve as the baseline for later BLT comparisons.
 
 ## What exists now
+
+The authoritative trainable baseline is [`ByteGPT`](python/blt_mlx/model.py). It has versioned configuration, deterministic byte and positional embeddings, explicit pre-normalization transformer blocks, causal multi-head attention, configurable hardware-aware linear/MLP paths, and a 256-value language-model head. The Java classes in this section remain the explicit forward-reference implementation.
 
 ### Embeddings
 
@@ -336,9 +261,9 @@ The final layer normalization and linear head produce 256 next-byte logits for e
 5. Selects the largest logit using argmax.
 6. Appends the selected byte.
 
-### Verified behavior
+### Verified Java behavior
 
-The console program was recompiled from source with Java 22 on August 10, 2026 and produced:
+The console program was recompiled from source with Java 22 on August 11, 2026 and produced:
 
 ```text
 Matmul Result:
@@ -351,25 +276,18 @@ GPT logits shape: Tensor(3x256)
 Generated byte count: 7
 ```
 
-This verifies forward execution and tensor shapes. It does not verify learning or meaningful generation.
+The Java path verifies forward mechanics and shapes. The MLX path additionally has automated causal/determinism tests, batched inputs, saved configuration, training, checkpoint loading, and greedy/temperature/top-k generation.
 
 ## What remains
 
-- Learned weights.
-- A loss function and training process.
-- Checkpoint loading.
-- Temperature sampling.
-- Top-k or top-p sampling.
-- Batched sequences.
-- Padding and attention masks.
+- Freeze a research-baseline model configuration and parameter-count report.
+- Add train/validation dataset files and document-boundary or padding masks for larger corpora.
 - Robust UTF-8 display and error handling.
-- A model configuration object.
 - Parameter counting.
-- Inference timing.
-- Automated causal and numerical tests.
 - A key/value cache for efficient generation, if desired later.
+- Preserve the deterministic Java model as a reference rather than building a second Java training engine.
 
-The current generator uses freshly randomized weights. Its output length is correct, but its byte choices have no learned relationship to the prompt.
+The MLX smoke checkpoint has learned the deliberately tiny training fixture. It proves the control flow, not general language modeling quality.
 
 ## Baseline metric
 
@@ -385,12 +303,12 @@ This is a useful reference point for later training and evaluation.
 
 Stage 3 is complete when:
 
-- The forward pass is covered by automated tests.
-- Causal masking is explicitly verified.
-- Model initialization is deterministic.
-- The model configuration can be saved and reconstructed.
-- Generation supports greedy, temperature, and top-k modes.
-- Random baseline loss and bits per byte are recorded.
+- [x] The forward pass is covered by automated tests.
+- [x] Causal masking is explicitly verified.
+- [x] Model initialization is deterministic.
+- [x] The model configuration can be saved and reconstructed.
+- [x] Generation supports greedy, temperature, and top-k modes.
+- [x] Initial loss and bits per byte are recorded by the smoke report.
 
 ---
 
@@ -398,9 +316,9 @@ Stage 3 is complete when:
 
 ## Objective
 
-Turn the forward-only byte model into a model that learns next-byte prediction from text.
+Turn the byte model into a model that learns next-byte prediction from text.
 
-This is the next critical stage. BLT-specific architecture should not be added until the ordinary byte model can learn a tiny dataset.
+The deterministic tiny-corpus path is implemented and has crossed its mechanical exit criteria. The broader research training pipeline remains partial: it still needs frozen external data, train/validation splits, dataset hashes, clipping and schedule controls, and longer-run reporting. BLT-specific architecture should not replace this baseline until those comparison inputs are frozen.
 
 ## Required components
 
@@ -447,7 +365,7 @@ Gradients must reach:
 - Layer-normalization scale and shift.
 - Final language-model head.
 
-If the Java path is selected, this requires the gradient system described in Stage 2. If the PyTorch path is selected, PyTorch supplies automatic differentiation while this project supplies the architecture.
+MLX supplies automatic differentiation while this project supplies the architecture and compiled training step. Handwritten Metal candidates expose custom vector-Jacobian products so their backward behavior can be checked against MLX.
 
 ### 4. Optimizer
 
@@ -484,41 +402,39 @@ A checkpoint should contain:
 
 ### 7. Training command
 
-The complete system should expose one reproducible command, for example:
+The tiny training system exposes one reproducible command:
 
 ```bash
-python train.py --config configs/tiny.yaml
+make train-smoke
 ```
 
-or, for a pure-Java implementation:
-
-```bash
-./gradlew run --args="train --config configs/tiny.json"
-```
+A later research command should accept frozen configuration and dataset files rather than embedding the smoke fixture.
 
 ## Tests and verification
 
-Add checks for:
+Current verification status:
 
-- Loss decreases on one batch.
-- Gradients are finite.
-- Parameters change after an optimizer step.
-- Gradient clipping works.
-- Saving and loading preserve logits.
-- Resuming training preserves the optimizer step.
-- A fixed seed reproduces early loss values.
-- A deliberately tiny dataset can be overfit.
+- [x] Loss decreases on the deterministic tiny fixture.
+- [x] Every executed step rejects non-finite loss or gradients.
+- [x] Saving and loading preserve logits exactly.
+- [x] Resuming training preserves the optimizer step and state.
+- [x] A deliberately tiny dataset can be overfit.
+- [ ] Add a direct parameter-delta assertion after one optimizer step.
+- [ ] Add gradient clipping and a clipping test.
+- [ ] Add a two-run early-loss reproducibility assertion.
 
 ## Completion criteria
 
 Stage 4 is complete when the model can:
 
-- Overfit one short sequence.
-- Drive training loss down substantially.
-- Generate recognizable continuations.
-- Save a checkpoint.
-- Reload the checkpoint and produce identical logits.
-- Resume training without resetting optimizer state.
+- [x] Overfit one deliberately tiny corpus.
+- [x] Drive training loss down substantially.
+- [x] Generate bytes influenced by the learned tiny fixture.
+- [x] Save a checkpoint.
+- [x] Reload the checkpoint and produce identical logits.
+- [x] Resume training without resetting the optimizer step or state.
+
+These checks complete the tiny training-system slice. The frozen research data and evaluation requirements above remain before Stage 4 can be treated as a complete experimental pipeline.
 
 ---
 
@@ -530,15 +446,13 @@ Make the trained byte model easy to run, observe, and understand through a simpl
 
 ## Current status
 
-The trained-model UI has not started because there is no learned checkpoint yet. The repository does contain a separate [`visualizer/`](visualizer/) Gradio lab that explains patch-routing policies with a live in-page animation. That lab is useful Stage 1 infrastructure, but it does not load a model, generate learned text, or satisfy this stage's completion criteria.
+The trained-model UI has not started, but a learned smoke checkpoint can now be produced with `make train-smoke`, so its prerequisite exists. The repository also contains a separate [`visualizer/`](visualizer/) Gradio lab that explains patch-routing policies with a live in-page animation. That lab is useful Stage 1 infrastructure, but it does not load the checkpoint, generate learned text, or satisfy this stage's completion criteria.
 
-At the August 10, 2026 refresh, all nine visualizer unit tests passed. The live-animation refactor was still uncommitted.
-
-The first UI should be built after the first learned checkpoint. A UI around the current random model would primarily display random bytes and could create the false impression that generation is already functional.
+The next UI should load the Phase 2 smoke checkpoint and clearly label its tiny-corpus scope. It should not imply general language quality or a learned BLT.
 
 ## Tiny-model proof
 
-Before building the UI, preserve a tiny checkpoint that demonstrates:
+The `make train-smoke` checkpoint and report now demonstrate:
 
 - A known training corpus.
 - A recorded loss curve.
@@ -546,7 +460,7 @@ Before building the UI, preserve a tiny checkpoint that demonstrates:
 - Recognizable byte generation.
 - Deterministic checkpoint loading.
 
-This checkpoint becomes the UI's default model and a permanent smoke-test fixture.
+The UI should reproduce or load this fixture and display its model/training metadata.
 
 ## Generation panel
 
@@ -596,21 +510,12 @@ Once Stage 6 exists, extend the same UI with:
 
 ## Recommended implementation
 
-For a Python/PyTorch track:
+For the implemented Python/MLX track:
 
 ```text
 Gradio UI
   -> checkpoint loader
   -> generation service
-  -> model
-```
-
-For a pure-Java track:
-
-```text
-static HTML and JavaScript
-  -> Java HttpServer API
-  -> checkpoint loader
   -> model
 ```
 
@@ -929,31 +834,32 @@ The project is complete when it can answer:
 
 Work through the project in this order:
 
-1. Expand `README.md` with the current and target architectures.
-2. Add the Gradle wrapper, `.gitignore`, seeded initialization, and tests.
-3. Decide between pure-Java gradients and PyTorch automatic differentiation.
-4. Implement next-byte loss, optimization, and checkpointing.
-5. Overfit one deliberately tiny corpus.
-6. Add deterministic sampling and checkpoint loading.
+1. [Complete] Document the current and target architectures.
+2. [Complete] Add the Gradle wrapper, ignore policy, seeded initialization, and tests.
+3. [Complete] Establish Java as the forward reference and MLX as the trainable Apple path.
+4. [Complete for the tiny fixture] Implement next-byte loss, optimization, and checkpointing.
+5. [Complete] Overfit one deliberately tiny corpus.
+6. [Complete] Add deterministic sampling, checkpoint loading, resume, and performance tracing.
 7. Build the basic generation and inspection UI.
-8. Implement and visualize fixed patching.
-9. Add the local encoder, global transformer, and local decoder.
-10. Train the fixed-patch hierarchy end to end.
-11. Add the entropy model and dynamic patch boundaries.
-12. Run controlled baseline comparisons.
-13. Write the conclusions and limitations.
+8. Freeze the research byte-GPT config, dataset splits/hashes, seed list, and evaluation prompts.
+9. Implement and visualize fixed patching.
+10. Add the local encoder, global transformer, and local decoder.
+11. Train the fixed-patch hierarchy end to end.
+12. Add the entropy model and dynamic patch boundaries.
+13. Run controlled baseline comparisons.
+14. Write the conclusions and limitations.
 
 ## Immediate milestone
 
 The next milestone should remain deliberately narrow:
 
-> Make the existing byte-GPT learn and reproduce a tiny byte sequence.
+> Put the learned smoke checkpoint behind a simple byte-inspection UI, then freeze the research byte-GPT dataset and configuration.
 
-Do not add BLT-specific architecture until this succeeds. Otherwise, failures in gradients, attention, training data, patching, cross-attention, and decoding will become difficult to isolate from one another.
+The tiny overfit proof now succeeds. Do not make a BLT quality claim until the byte-GPT comparison data, seeds, prompts, and evaluation rules are frozen; otherwise baseline drift will be confounded with patching changes.
 
 ## Definition of the three major finish lines
 
-### Finish line A: Trustworthy byte-GPT baseline
+### Finish line A: Trustworthy byte-GPT baseline — achieved for the tiny fixture
 
 - Reproducible build.
 - Automated mathematical and causal tests.

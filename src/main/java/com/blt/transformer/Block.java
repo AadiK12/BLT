@@ -5,6 +5,8 @@ import com.blt.nn.Linear;
 import com.blt.nn.Module;
 import com.blt.tensor.Tensor;
 
+import java.util.Random;
+
 /**
  * A Single Transformer Block.
  * Contains:
@@ -25,11 +27,15 @@ public class Block extends Module {
     private final Linear feedForwardOut;
 
     public Block(int dModel, int numHeads) {
-        this.attention = new MultiHeadAttention(dModel, numHeads);
+        this(dModel, numHeads, new Random(0L));
+    }
+
+    public Block(int dModel, int numHeads, Random rng) {
+        this.attention = new MultiHeadAttention(dModel, numHeads, rng);
         this.ln1 = new LayerNorm(dModel);
         this.ln2 = new LayerNorm(dModel);
-        this.feedForwardIn = new Linear(dModel, dModel * 4);
-        this.feedForwardOut = new Linear(dModel * 4, dModel);
+        this.feedForwardIn = new Linear(dModel, dModel * 4, rng);
+        this.feedForwardOut = new Linear(dModel * 4, dModel, rng);
     }
 
     @Override

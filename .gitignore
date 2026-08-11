@@ -5,3 +5,10 @@
 *.py[cod]
 .pytest_cache/
 .venv/
+*.egg-info/
+.gradle/
+build/
+*.class
+**/.ipynb_checkpoints/
+artifacts/
+.ruff_cache/

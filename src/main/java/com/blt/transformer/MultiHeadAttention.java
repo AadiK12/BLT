@@ -4,6 +4,8 @@ import com.blt.nn.Module;
 import com.blt.tensor.Tensor;
 import com.blt.nn.Linear;
 
+import java.util.Random;
+
 /**
  * Multi-Head Scaled Dot-Product Attention.
  * The core of the Transformer.
@@ -28,6 +30,10 @@ public class MultiHeadAttention extends Module {
     private final Linear out;
 
     public MultiHeadAttention(int dModel, int numHeads) {
+        this(dModel, numHeads, new Random(0L));
+    }
+
+    public MultiHeadAttention(int dModel, int numHeads, Random rng) {
         if (dModel <= 0 || numHeads <= 0) {
             throw new IllegalArgumentException("dModel and numHeads must be positive.");
         }
@@ -39,10 +45,10 @@ public class MultiHeadAttention extends Module {
         this.numHeads = numHeads;
         this.dHead = dModel / numHeads;
 
-        this.q = new Linear(dModel, dModel);
-        this.k = new Linear(dModel, dModel);
-        this.v = new Linear(dModel, dModel);
-        this.out = new Linear(dModel, dModel);
+        this.q = new Linear(dModel, dModel, rng);
+        this.k = new Linear(dModel, dModel, rng);
+        this.v = new Linear(dModel, dModel, rng);
+        this.out = new Linear(dModel, dModel, rng);
     }
 
     @Override

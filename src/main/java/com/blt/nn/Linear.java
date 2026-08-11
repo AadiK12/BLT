@@ -2,6 +2,8 @@ package com.blt.nn;
 
 import com.blt.tensor.Tensor;
 
+import java.util.Random;
+
 /**
  * A Linear (Fully Connected) Layer.
  * y = xA^T + b
@@ -13,12 +15,23 @@ import com.blt.tensor.Tensor;
  */
 public class Linear extends Module {
 
-    private Tensor weights;
-    private Tensor bias;
+    private final Tensor weights;
+    private final Tensor bias;
 
     public Linear(int inFeatures, int outFeatures) {
+        this(inFeatures, outFeatures, new Random(0L));
+    }
+
+    public Linear(int inFeatures, int outFeatures, long seed) {
+        this(inFeatures, outFeatures, new Random(seed));
+    }
+
+    public Linear(int inFeatures, int outFeatures, Random rng) {
+        if (inFeatures <= 0 || outFeatures <= 0) {
+            throw new IllegalArgumentException("Linear dimensions must be positive.");
+        }
         this.weights = new Tensor(outFeatures, inFeatures);
-        this.weights.fillRandom();
+        this.weights.fillRandom(rng, 0.1f);
         this.bias = new Tensor(1, outFeatures);
     }
 

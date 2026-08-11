@@ -6,6 +6,7 @@ import com.blt.nn.Module;
 import com.blt.tensor.Tensor;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Random;
 
 /**
  * The Byte Latent Transformer (GPT) Model.
@@ -32,12 +33,25 @@ public class GPT extends Module {
     private final Linear head;
 
     public GPT(int vocabSize, int dModel, int numLayers, int numHeads) {
-        this(vocabSize, dModel, numLayers, numHeads, DEFAULT_MAX_SEQUENCE_LENGTH);
+        this(vocabSize, dModel, numLayers, numHeads, DEFAULT_MAX_SEQUENCE_LENGTH, 0L);
     }
 
     public GPT(int vocabSize, int dModel, int numLayers, int numHeads, int maxSequenceLength) {
+        this(vocabSize, dModel, numLayers, numHeads, maxSequenceLength, 0L);
+    }
+
+    public GPT(
+            int vocabSize,
+            int dModel,
+            int numLayers,
+            int numHeads,
+            int maxSequenceLength,
+            long seed) {
         if (vocabSize <= 0 || dModel <= 0 || numLayers < 0 || maxSequenceLength <= 0) {
             throw new IllegalArgumentException("Model dimensions must be positive.");
+        }
+        if (numHeads <= 0 || dModel % numHeads != 0) {
+            throw new IllegalArgumentException("dModel must be divisible by a positive numHeads.");
         }
 
         this.vocabSize = vocabSize;
@@ -47,14 +61,15 @@ public class GPT extends Module {
         this.positionalEmbeddings = new Tensor(maxSequenceLength, dModel);
         this.blocks = new Block[numLayers];
         this.finalLayerNorm = new LayerNorm(dModel);
-        this.head = new Linear(dModel, vocabSize);
 
-        this.tokenEmbeddings.fillRandom();
-        this.positionalEmbeddings.fillRandom();
+        Random rng = new Random(seed);
+        this.tokenEmbeddings.fillRandom(rng, 0.1f);
+        this.positionalEmbeddings.fillRandom(rng, 0.1f);
 
         for (int i = 0; i < numLayers; i++) {
-            this.blocks[i] = new Block(dModel, numHeads);
+            this.blocks[i] = new Block(dModel, numHeads, rng);
         }
+        this.head = new Linear(dModel, vocabSize, rng);
     }
 
     @Override

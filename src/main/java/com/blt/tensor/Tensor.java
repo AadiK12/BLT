@@ -150,11 +150,24 @@ public class Tensor {
     }
 
     public void fillRandom() {
-        fillRandom(0.1f);
+        fillRandom(new Random(0L), 0.1f);
     }
 
     public void fillRandom(float scale) {
-        Random rng = new Random();
+        fillRandom(new Random(0L), scale);
+    }
+
+    public void fillRandom(long seed, float scale) {
+        fillRandom(new Random(seed), scale);
+    }
+
+    public void fillRandom(Random rng, float scale) {
+        if (rng == null) {
+            throw new IllegalArgumentException("Random generator must not be null.");
+        }
+        if (scale < 0.0f) {
+            throw new IllegalArgumentException("Random scale must be non-negative.");
+        }
         for (int i = 0; i < rows; i++) {
             for (int j = 0; j < cols; j++) {
                 this.data[i][j] = (rng.nextFloat() - 0.5f) * scale;
