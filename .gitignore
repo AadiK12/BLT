@@ -5,6 +5,3 @@
 *.py[cod]
 .pytest_cache/
 .venv/
-visualizer/.cache/
-visualizer/media/
-

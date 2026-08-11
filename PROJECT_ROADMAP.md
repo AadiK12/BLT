@@ -32,22 +32,26 @@ The primary research references are:
 
 ## Current project status
 
-Last verified: **August 4, 2026**
+Last verified: **August 10, 2026**
 
 Current repository state:
 
 - Branch: `main`
-- The local branch matched `origin/main` when this roadmap was written.
-- Latest commit: `ada2b7a` (`complete blt`, April 22, 2026)
-- The Java source compiles with Java 22.
-- The console demonstration runs successfully.
+- The `main` branch tip matched `origin/main` at verification time.
+- Latest committed revision: `0ded4c1` (`simple fun UI`, August 10, 2026).
+- The working tree also contains an uncommitted visualizer refactor from Manim-rendered MP4s to a live in-page Gradio animation, plus this roadmap refresh.
+- The Java source compiles with Java 22 using `javac -d <temporary-directory> @sources.txt`.
+- The console demonstration runs successfully and produces `Tensor(3x256)` GPT logits.
+- The executed Stage 1 research notebook contains 37 cells, including 10 sequentially executed code cells with no saved error outputs.
+- The current working-tree patching lab has a documented live in-page Gradio workflow and nine passing unit tests.
 - The model can perform a forward pass and produce byte logits.
 - The model cannot train, save learned weights, or generate meaningful learned text.
-- No latent patching or BLT-specific local/global architecture is implemented.
+- The patching lab can visualize fixed, whitespace-like, and toy bigram-entropy boundaries, but no learned latent patching or BLT-specific local/global model architecture is implemented.
+- The Gradle wrapper, deterministic Java initialization, Java correctness tests, and repository cleanup remain incomplete; generated Gradle/build/class artifacts are still tracked.
 
 The most accurate description is:
 
-> The project is partway through Stage 3 of 7. It contains a runnable, forward-only byte-level GPT baseline, not yet a trainable model or a true Byte Latent Transformer.
+> The research framing is substantially complete, while the Java foundations and byte-GPT baseline remain partial. The repository has a runnable, forward-only byte-level GPT and an educational patch-routing visualizer, but it does not yet have training, learned generation, or a true Byte Latent Transformer.
 
 ### Current architecture
 
@@ -75,13 +79,13 @@ The distinction matters: processing raw bytes does not by itself make a model a 
 
 | Stage | Status | Main finish line |
 | --- | --- | --- |
-| 1. Research framing | Thin/incomplete | A documented definition of BLT and the experiment |
-| 2. Tensor and neural-network foundations | Implemented but untested | Trusted, deterministic mathematical primitives |
-| 3. Byte-GPT forward model | Runnable but untrained | A correct and reproducible byte-level baseline |
+| 1. Research framing | Substantially complete | Add the concise root-README architecture summary and finalize the training implementation decision |
+| 2. Tensor and neural-network foundations | Partial; manually verified | Add deterministic initialization, automated Java tests, a reproducible build, and repository cleanup |
+| 3. Byte-GPT forward model | Runnable; baseline incomplete and untrained | Make the baseline deterministic, tested, configurable, and reproducible |
 | 4. Training system | Not started | The model learns from text and saves checkpoints |
-| 5. Tiny trained model and UI | Not started | Learned text can be generated and inspected in a browser |
-| 6. Actual BLT architecture | Not started | Bytes are dynamically grouped into latent patches |
-| 7. Experiments and conclusions | Not started | Evidence shows what BLT changes and whether it helps |
+| 5. Tiny trained model and UI | Not started; educational patching UI exists | Learned text can be generated and inspected in a browser |
+| 6. Actual BLT architecture | Not started; toy patch routing only | Bytes are dynamically grouped into learned latent patches and processed by the local/global/local hierarchy |
+| 7. Experiments and conclusions | Designed; execution not started | Freeze the protocol and seed list, run the controlled comparisons, and report the evidence |
 
 ---
 
@@ -103,22 +107,17 @@ The current implementation is the second system. The eventual research target is
 
 - The source comments identify the project as a BLT assignment.
 - The implementation demonstrates many underlying transformer mechanics.
-- The repository README contains only `Start of BLT Project`.
-- The research objective and architectural distinction are not documented in the repository.
+- This roadmap defines the project purpose, stage boundaries, implementation sequence, and completion criteria.
+- [`notebooks/01_stage_1_blt_research_readme.ipynb`](notebooks/01_stage_1_blt_research_readme.ipynb) is an executed, 37-cell research companion covering bytes, tokens, patches, the target architecture, causal constraints, repository gaps, a glossary, and research limitations.
+- The notebook distinguishes paper claims from locally testable hypotheses and defines a controlled fixed-versus-entropy patching comparison. This is still a proposed experiment, not a result.
+- [`README.md`](README.md) now identifies the repository as an educational path from a byte-GPT baseline to a small BLT and documents the separate patching lab.
+- [`visualizer/`](visualizer/) makes Stage 1 patch-routing concepts inspectable without claiming that the learned Stage 6 model exists.
 
 ## What remains
 
-Document:
-
-- What a byte, token, and patch are.
-- Why direct byte modeling is expensive.
-- Why BLT moves expensive computation from bytes to patches.
-- How fixed, whitespace, and entropy patching differ.
-- The roles of the local encoder, global transformer, and local decoder.
-- How encoder and decoder cross-attention transfer information between bytes and patches.
-- Which parts of the paper this project will reproduce.
-- Which parts will be simplified.
-- What "from scratch" means for this project.
+- Add a concise current-versus-target architecture summary and a direct notebook link to the root `README.md`.
+- Finalize whether the trainable implementation will use custom Java gradients or PyTorch autograd. The recommendation remains to preserve Java as the forward-pass learning artifact and use PyTorch for the trainable research model.
+- Freeze an exact dataset protocol, seed list, and analysis rule before calling the Stage 7 comparison pre-registered.
 
 ## Research questions
 
@@ -177,7 +176,7 @@ The repository also implements:
 - [`LayerNorm`](src/main/java/com/blt/nn/LayerNorm.java)
 - GELU activation inside [`Block`](src/main/java/com/blt/transformer/Block.java)
 
-These operations compiled and produced the expected shapes and smoke-test values during the August 4, 2026 verification.
+These operations compiled and produced the expected shapes and smoke-test values during the August 10, 2026 verification.
 
 ## What remains
 
@@ -210,12 +209,13 @@ Add:
 
 ### Repository and build hygiene
 
-Add or repair:
+The repository now has a `.gitignore` for editor and Python outputs. It still needs:
 
 - A Gradle wrapper (`gradlew`, `gradlew.bat`, and wrapper files).
-- A `.gitignore`.
+- Java/Gradle entries in `.gitignore`.
 - A clean separation between source and generated files.
 - Removal of tracked `.class`, `build/`, and `.gradle/` artifacts.
+- Removal of the tracked notebook checkpoint and an `.ipynb_checkpoints/` ignore rule.
 - Clarification or removal of the duplicate `solutions` package.
 - A single authoritative build and test command.
 
@@ -338,7 +338,7 @@ The final layer normalization and linear head produce 256 next-byte logits for e
 
 ### Verified behavior
 
-The console program compiled with Java 22 and produced:
+The console program was recompiled from source with Java 22 on August 10, 2026 and produced:
 
 ```text
 Matmul Result:
@@ -528,6 +528,12 @@ Stage 4 is complete when the model can:
 
 Make the trained byte model easy to run, observe, and understand through a simple local browser interface.
 
+## Current status
+
+The trained-model UI has not started because there is no learned checkpoint yet. The repository does contain a separate [`visualizer/`](visualizer/) Gradio lab that explains patch-routing policies with a live in-page animation. That lab is useful Stage 1 infrastructure, but it does not load a model, generate learned text, or satisfy this stage's completion criteria.
+
+At the August 10, 2026 refresh, all nine visualizer unit tests passed. The live-animation refactor was still uncommitted.
+
 The first UI should be built after the first learned checkpoint. A UI around the current random model would primarily display random bytes and could create the false impression that generation is already functional.
 
 ## Tiny-model proof
@@ -629,6 +635,10 @@ Stage 5 is complete when:
 ## Objective
 
 Replace expensive transformer computation at every byte with expensive transformer computation at latent patch positions.
+
+## Current status
+
+Implementation has not started for the learned BLT hierarchy. The patching lab already provides inspectable fixed-width, whitespace-like, and toy bigram-entropy boundary policies, so it can serve as a visualization and tracing scaffold later. It does not yet provide a learned entropy model, local encoder, patch-level global transformer, local decoder, end-to-end loss, or training.
 
 This stage changes the project from a byte-level GPT into a BLT.
 
@@ -788,6 +798,10 @@ Stage 6 is complete when:
 ## Objective
 
 Turn the implementation into a reproducible research project rather than only a coding exercise.
+
+## Current status
+
+The experiment is designed but has not been run. The Stage 1 notebook proposes a falsifiable matched-patch-budget comparison between fixed-stride and entropy-patched tiny BLTs, including held-out bits per byte, paired runs, a 2% average-patch-length matching tolerance, a paired confidence interval, and falsification rules. The exact dataset protocol, seed list, and analysis rule still need to be frozen before the comparison is called pre-registered, and no result should be claimed until Stages 4 through 6 are complete.
 
 ## Models to compare
 

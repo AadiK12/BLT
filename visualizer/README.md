@@ -1,8 +1,8 @@
 # BLT Patching Lab
 
-This is a local educational UI that turns a prompt into UTF-8 bytes, applies one
-of the Stage 1 notebook patching policies, and asks Manim Community to render an
-explanatory animation.
+This is a live local UI that turns a prompt into UTF-8 bytes, applies one of the
+Stage 1 notebook patching policies, and animates the resulting byte-to-patch
+trace directly in the browser.
 
 ## What is real today
 
@@ -11,7 +11,9 @@ explanatory animation.
   `scripts/build_stage1_research_notebook.py`.
 - Every byte is assigned to one explicit patch and every boundary has an
   inspectable reason.
-- The Gradio interface renders a Manim MP4 and a complete patch ledger.
+- Python and Gradio produce the interface and patch trace. CSS animates the
+  stages in place when **Animate patching** is clicked.
+- No video, image sequence, or animation file is rendered or stored.
 
 ## Scope boundary
 
@@ -30,15 +32,10 @@ uv sync --python 3.12
 uv run python app.py
 ```
 
-Open the local URL printed by Gradio. The first animation takes longer because
-Manim renders the video; identical settings reuse the cached MP4.
+Open the local URL printed by Gradio.
 
 ## Verify
 
 ```bash
 uv run pytest
-uv run python render_sample.py
 ```
-
-The smoke render prints the generated MP4 path. The Gradio app creates the
-per-prompt Manim configuration automatically.
