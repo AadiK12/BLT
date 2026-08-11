@@ -39,8 +39,10 @@ Current repository state:
 - Branch: `main`
 - The deterministic Java reference builds and tests through the pinned Gradle 8.10.2 wrapper; 12 JUnit tests cover tensor math, normalization, initialization, model shape, and causal behavior.
 - The self-contained Python/MLX path trains a byte-level GPT on the Apple GPU, saves model and optimizer state, reloads exact logits, resumes the optimizer step, and generates bytes with greedy, temperature, or top-k decoding.
-- Twelve Python tests cover pure references, custom Metal forward/backward behavior, model determinism and causality, checkpoint/resume, shape-derived comparisons, and generation metrics.
+- Seventeen Python tests cover pure references, custom Metal forward/backward behavior, model determinism and causality, packed-document and padding masks, checkpoint/config binding, checkpoint/resume, Stage 3 CLI integration, shape-derived comparisons, and generation metrics.
 - The verified 80-step tiny-corpus smoke run reduced loss from 6.09 to 0.63 and evaluation bits per byte from 8.86 to 0.98.
+- The frozen Stage 3 baseline contains 108,032 parameters, committed train/validation data with enforced SHA-256 hashes, document-aware attention/loss masks, exact config-bound checkpoints, held-out BPB evaluation, and UTF-8-safe structured generation.
+- The verified 10-step Stage 3 run reduced training loss from 5.92 to 2.89 and authored validation BPB from 8.59 to 4.83. This is a deterministic teaching result, not an untouched research test result.
 - Performance infrastructure traces training, prefill, and decode shapes; runs balanced interleaved MLX-versus-Metal comparisons; gates on complete-output correctness, median, and p95; and records environment and memory.
 - Checkpoint-level measurement exposes TTFT, TPOT, end-to-end latency, bytes per second, peak memory, and windowed thermal-soak plumbing.
 - The Stage 1 notebook and separate Gradio patching lab remain the research and visualization surfaces.
@@ -49,7 +51,7 @@ Current repository state:
 
 The most accurate description is:
 
-> The research framing and Phase 2 foundation are complete. The repository now has a deterministic, trainable, checkpointed MLX byte-GPT baseline plus a tested Java reference and hardware-aware measurement harness. It still does not have the local/global/local latent-patch hierarchy required to call the model a Byte Latent Transformer.
+> The research framing, Phase 2 foundation, and Stage 3 frozen byte-GPT baseline are complete. The repository has a deterministic, trainable, checkpointed and evaluated MLX baseline plus a tested Java reference and hardware-aware measurement harness. It still does not have the local/global/local latent-patch hierarchy required to call the model a Byte Latent Transformer.
 
 ### Current architecture
 
@@ -79,8 +81,8 @@ The distinction matters: processing raw bytes does not by itself make a model a 
 | --- | --- | --- |
 | 1. Research framing | Complete | Keep claims and references current as implementation evolves |
 | 2. Tensor and neural-network foundations | Complete | Preserve correctness gates while extending the kernel experiments |
-| 3. Byte-GPT forward model | MLX baseline complete; Java reference complete for forward learning | Freeze a research-sized configuration and parameter-count report |
-| 4. Training system | Tiny deterministic path works; research pipeline partial | Add frozen datasets/splits, hashes, longer configs, and validation reporting |
+| 3. Byte-GPT baseline | Complete for the frozen authored fixture | Preserve the contract as later architectures are introduced |
+| 4. Training system | Deterministic authored-data path works; research pipeline partial | Add a larger external corpus, untouched test split, clipping/schedules, and longer-run reporting |
 | 5. Tiny trained model and UI | Checkpoint exists; trained-model UI not started | Load the learned checkpoint in a browser and expose byte-level inspection |
 | 6. Actual BLT architecture | Not started; toy patch routing only | Bytes are dynamically grouped into learned latent patches and processed by the local/global/local hierarchy |
 | 7. Experiments and conclusions | Designed; execution not started | Freeze the protocol and seed list, run the controlled comparisons, and report the evidence |
@@ -214,7 +216,17 @@ Build a conventional byte-level language model that can serve as the baseline fo
 
 ## What exists now
 
-The authoritative trainable baseline is [`ByteGPT`](python/blt_mlx/model.py). It has versioned configuration, deterministic byte and positional embeddings, explicit pre-normalization transformer blocks, causal multi-head attention, configurable hardware-aware linear/MLP paths, and a 256-value language-model head. The Java classes in this section remain the explicit forward-reference implementation.
+The authoritative trainable baseline is [`ByteGPT`](python/blt_mlx/model.py). It has versioned configuration, deterministic byte and positional embeddings, explicit pre-normalization transformer blocks, causal multi-head attention, configurable hardware-aware linear/MLP paths, and a 256-value language-model head. The frozen source contract is [`configs/stage3_byte_gpt_tiny.json`](configs/stage3_byte_gpt_tiny.json), and [`docs/STAGE3_BYTE_GPT_BASELINE.md`](docs/STAGE3_BYTE_GPT_BASELINE.md) records its data, masks, parameter inventory, commands, evidence, and limitations. The Java classes in this section remain the explicit forward-reference implementation.
+
+The Stage 3 MLX baseline additionally provides:
+
+- 108,032 executable-counted parameters with a fail-closed expected count.
+- Committed authored train and validation files with enforced SHA-256 hashes.
+- Packed examples whose attention cannot cross document boundaries.
+- Separate attention, loss, and document-ID masks so padding and artificial boundary targets are excluded correctly.
+- Config-bound checkpoint metadata and evaluation refusal when the checkpoint/config hashes differ.
+- UTF-8-safe generation reports containing text, validity, byte values, hex, settings, and latency.
+- One complete `make stage3-smoke` lifecycle.
 
 ### Embeddings
 
@@ -278,16 +290,14 @@ Generated byte count: 7
 
 The Java path verifies forward mechanics and shapes. The MLX path additionally has automated causal/determinism tests, batched inputs, saved configuration, training, checkpoint loading, and greedy/temperature/top-k generation.
 
-## What remains
+## Deliberately deferred
 
-- Freeze a research-baseline model configuration and parameter-count report.
-- Add train/validation dataset files and document-boundary or padding masks for larger corpora.
-- Robust UTF-8 display and error handling.
-- Parameter counting.
-- A key/value cache for efficient generation, if desired later.
-- Preserve the deterministic Java model as a reference rather than building a second Java training engine.
+- A key/value cache for efficient generation. Current full-context recomputation is the explicit unoptimized baseline.
+- A larger public-domain corpus and untouched test set, which belong to Stage 4 research-training hardening.
+- Broad language-quality claims. The authored validation split was used while selecting the 10-step teaching budget.
+- A second Java training engine. Java remains the deterministic forward reference.
 
-The MLX smoke checkpoint has learned the deliberately tiny training fixture. It proves the control flow, not general language modeling quality.
+The Stage 3 checkpoint learns the deliberately tiny authored fixture and improves its held-out authored split. It proves the full baseline contract, not general-purpose language quality.
 
 ## Baseline metric
 
@@ -309,6 +319,10 @@ Stage 3 is complete when:
 - [x] The model configuration can be saved and reconstructed.
 - [x] Generation supports greedy, temperature, and top-k modes.
 - [x] Initial loss and bits per byte are recorded by the smoke report.
+- [x] The frozen parameter count and data hashes are checked at runtime.
+- [x] Packed examples block cross-document attention and loss targets.
+- [x] Checkpoints are bound to the exact baseline config and data evidence.
+- [x] Generation reports preserve UTF-8 validity, raw bytes, hex, settings, and latency.
 
 ---
 
@@ -841,7 +855,7 @@ Work through the project in this order:
 5. [Complete] Overfit one deliberately tiny corpus.
 6. [Complete] Add deterministic sampling, checkpoint loading, resume, and performance tracing.
 7. Build the basic generation and inspection UI.
-8. Freeze the research byte-GPT config, dataset splits/hashes, seed list, and evaluation prompts.
+8. [Complete for the authored Stage 3 fixture] Freeze the byte-GPT config, dataset splits/hashes, seed, and evaluation prompts.
 9. Implement and visualize fixed patching.
 10. Add the local encoder, global transformer, and local decoder.
 11. Train the fixed-patch hierarchy end to end.
@@ -853,7 +867,7 @@ Work through the project in this order:
 
 The next milestone should remain deliberately narrow:
 
-> Put the learned smoke checkpoint behind a simple byte-inspection UI, then freeze the research byte-GPT dataset and configuration.
+> Put the frozen Stage 3 checkpoint behind a simple byte-inspection UI, then harden Stage 4 with a larger external dataset and untouched test split.
 
 The tiny overfit proof now succeeds. Do not make a BLT quality claim until the byte-GPT comparison data, seeds, prompts, and evaluation rules are frozen; otherwise baseline drift will be confounded with patching changes.
 

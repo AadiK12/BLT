@@ -1,4 +1,4 @@
-.PHONY: setup doctor test test-python test-java lint java-run train-smoke phase2-smoke benchmark-shapes benchmark-generation thermal-soak-short clean-generated
+.PHONY: setup doctor test test-python test-java lint java-run train-smoke phase2-smoke benchmark-shapes benchmark-generation thermal-soak-short stage3-inspect stage3-train stage3-evaluate stage3-generate stage3-smoke clean-generated
 
 setup:
 	uv sync --frozen --extra apple --extra dev
@@ -47,6 +47,32 @@ thermal-soak-short: train-smoke
 		--output artifacts/phase2_benchmarks/thermal_soak_short.json
 
 phase2-smoke: doctor test train-smoke benchmark-shapes benchmark-generation
+
+stage3-inspect:
+	uv run blt-lab inspect-baseline \
+		--config configs/stage3_byte_gpt_tiny.json \
+		--output artifacts/stage3/inspection.json
+
+stage3-train:
+	uv run blt-lab train-baseline \
+		--config configs/stage3_byte_gpt_tiny.json \
+		--checkpoint artifacts/stage3/checkpoint \
+		--output artifacts/stage3/training_report.json
+
+stage3-evaluate: stage3-train
+	uv run blt-lab evaluate-checkpoint \
+		--config configs/stage3_byte_gpt_tiny.json \
+		--checkpoint artifacts/stage3/checkpoint \
+		--output artifacts/stage3/evaluation.json
+
+stage3-generate: stage3-train
+	uv run blt-lab generate \
+		--checkpoint artifacts/stage3/checkpoint \
+		--prompt "Byte " \
+		--max-new-bytes 32 \
+		--output artifacts/stage3/generation.json
+
+stage3-smoke: doctor test stage3-inspect stage3-train stage3-evaluate stage3-generate
 
 clean-generated:
 	./gradlew clean

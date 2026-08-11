@@ -20,6 +20,7 @@ dev = [
 ]
 
 [project.scripts]
+blt-lab = "blt_mlx.cli:main"
 blt-phase2 = "blt_mlx.cli:main"
 
 [tool.setuptools.packages.find]

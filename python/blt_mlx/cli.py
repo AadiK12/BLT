@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 import mlx.core as mx
 
+from blt_mlx.baseline import (
+    Stage3BaselineConfig,
+    byte_display,
+    sha256_file,
+    uniform_byte_baseline,
+    validate_parameter_count,
+)
 from blt_mlx.checkpoint import load_checkpoint, save_checkpoint
 from blt_mlx.config import ModelConfig, TrainingConfig
 from blt_mlx.data import DEFAULT_TINY_CORPUS, ByteDataset
@@ -22,7 +30,7 @@ from blt_mlx.performance import (
     trace_model_shape_suite,
     write_json,
 )
-from blt_mlx.training import Trainer, evaluate_bits_per_byte
+from blt_mlx.training import Trainer, evaluate_bits_per_byte, evaluate_loss
 
 
 def _tiny_model_config(*, dtype: str = "float32") -> ModelConfig:
@@ -252,8 +260,225 @@ def run_thermal_soak(
     return 0
 
 
+def inspect_stage3_baseline(*, config_path: Path, output: Path) -> int:
+    config = Stage3BaselineConfig.load(config_path)
+    model = ByteGPT(config.model)
+    parameters = validate_parameter_count(config, model)
+    validation = config.load_dataset("validation")
+    untrained_loss = evaluate_loss(
+        model,
+        validation,
+        batches=config.evaluation.batches,
+    )
+    payload = {
+        "schema_version": 1,
+        "environment": environment_metadata(),
+        "baseline": config.as_dict(),
+        "baseline_config_sha256": sha256_file(config.source_path),
+        "datasets": {
+            "train": config.dataset_evidence("train"),
+            "validation": config.dataset_evidence("validation"),
+        },
+        "parameters": parameters,
+        "uniform_byte_baseline": uniform_byte_baseline(),
+        "untrained_validation": {
+            "cross_entropy_nats": untrained_loss,
+            "bits_per_byte": untrained_loss / math.log(2.0),
+            "batches": config.evaluation.batches,
+        },
+    }
+    path = write_json(output, payload)
+    print(json.dumps({"status": "complete", "output": str(path)}, indent=2))
+    return 0
+
+
+def _evaluation_payload(
+    *,
+    model: ByteGPT,
+    config: Stage3BaselineConfig,
+) -> dict:
+    validation = config.load_dataset("validation")
+    validation_loss = evaluate_loss(
+        model,
+        validation,
+        batches=config.evaluation.batches,
+    )
+    generations = []
+    for index, prompt in enumerate(config.evaluation.prompts):
+        result = generate(
+            model,
+            prompt.encode("utf-8"),
+            max_new_bytes=config.evaluation.max_new_bytes,
+            seed=config.model.seed + index,
+        )
+        generations.append(
+            {
+                "prompt": byte_display(result.prompt),
+                "generated": byte_display(result.generated),
+                "output": byte_display(result.output),
+                "metrics": generation_metrics(result),
+            }
+        )
+    return {
+        "validation_cross_entropy_nats": validation_loss,
+        "validation_bits_per_byte": validation_loss / math.log(2.0),
+        "validation_batches": config.evaluation.batches,
+        "generations": generations,
+    }
+
+
+def train_stage3_baseline(
+    *,
+    config_path: Path,
+    checkpoint: Path,
+    output: Path,
+) -> int:
+    config = Stage3BaselineConfig.load(config_path)
+    model = ByteGPT(config.model)
+    parameters = validate_parameter_count(config, model)
+    training_dataset = config.load_dataset("train")
+    initial_evaluation = _evaluation_payload(model=model, config=config)
+    trainer = Trainer(model, config.training)
+    training_report = trainer.train(training_dataset)
+    final_evaluation = _evaluation_payload(model=model, config=config)
+    if not training_report.loss_improved:
+        raise RuntimeError("Stage 3 training loss did not improve")
+    if (
+        final_evaluation["validation_bits_per_byte"]
+        >= initial_evaluation["validation_bits_per_byte"]
+    ):
+        raise RuntimeError("Stage 3 validation bits per byte did not improve")
+    dataset_evidence = {
+        "train": config.dataset_evidence("train"),
+        "validation": config.dataset_evidence("validation"),
+    }
+    checkpoint_path = save_checkpoint(
+        checkpoint,
+        trainer,
+        run_metadata={
+            "stage": 3,
+            "baseline_name": config.name,
+            "baseline_config_sha256": sha256_file(config.source_path),
+            "datasets": dataset_evidence,
+            "initial_validation_bits_per_byte": initial_evaluation[
+                "validation_bits_per_byte"
+            ],
+            "final_validation_bits_per_byte": final_evaluation[
+                "validation_bits_per_byte"
+            ],
+        },
+    )
+    payload = {
+        "schema_version": 1,
+        "environment": environment_metadata(),
+        "baseline": config.as_dict(),
+        "baseline_config_sha256": sha256_file(config.source_path),
+        "datasets": dataset_evidence,
+        "parameters": parameters,
+        "checkpoint": str(checkpoint_path),
+        "initial_evaluation": initial_evaluation,
+        "training": {
+            "initial_loss": training_report.initial_loss,
+            "final_loss": training_report.final_loss,
+            "minimum_loss": training_report.minimum_loss,
+            "loss_improved": training_report.loss_improved,
+            "global_step": trainer.global_step,
+            "steps": [
+                {
+                    "step": observation.step,
+                    "loss": observation.loss,
+                    "duration_ms": observation.duration_ms,
+                    "active_memory_bytes": observation.active_memory_bytes,
+                    "peak_memory_bytes": observation.peak_memory_bytes,
+                }
+                for observation in training_report.steps
+            ],
+        },
+        "final_evaluation": final_evaluation,
+    }
+    path = write_json(output, payload)
+    print(json.dumps({"status": "complete", "output": str(path)}, indent=2))
+    return 0
+
+
+def evaluate_stage3_checkpoint(
+    *,
+    config_path: Path,
+    checkpoint: Path,
+    output: Path,
+) -> int:
+    config = Stage3BaselineConfig.load(config_path)
+    loaded = load_checkpoint(checkpoint)
+    if loaded.model.config.as_dict() != config.model.as_dict():
+        raise ValueError("checkpoint model configuration does not match the baseline")
+    expected_config_hash = sha256_file(config.source_path)
+    recorded_config_hash = loaded.metadata.get("run_metadata", {}).get(
+        "baseline_config_sha256"
+    )
+    if recorded_config_hash != expected_config_hash:
+        raise ValueError("checkpoint was not trained from this exact baseline config")
+    parameters = validate_parameter_count(config, loaded.model)
+    payload = {
+        "schema_version": 1,
+        "environment": environment_metadata(),
+        "baseline_name": config.name,
+        "baseline_config_sha256": expected_config_hash,
+        "checkpoint": str(checkpoint.expanduser().resolve()),
+        "parameters": parameters,
+        "datasets": {
+            "validation": config.dataset_evidence("validation"),
+        },
+        "evaluation": _evaluation_payload(model=loaded.model, config=config),
+    }
+    path = write_json(output, payload)
+    print(json.dumps({"status": "complete", "output": str(path)}, indent=2))
+    return 0
+
+
+def generate_from_checkpoint(
+    *,
+    checkpoint: Path,
+    prompt: str,
+    max_new_bytes: int,
+    temperature: float,
+    top_k: int | None,
+    seed: int,
+    output: Path | None,
+) -> int:
+    loaded = load_checkpoint(checkpoint)
+    result = generate(
+        loaded.model,
+        prompt.encode("utf-8"),
+        max_new_bytes=max_new_bytes,
+        temperature=temperature,
+        top_k=top_k,
+        seed=seed,
+    )
+    payload = {
+        "schema_version": 1,
+        "checkpoint": str(checkpoint.expanduser().resolve()),
+        "model": loaded.model.config.as_dict(),
+        "checkpoint_metadata": loaded.metadata.get("run_metadata", {}),
+        "settings": {
+            "max_new_bytes": max_new_bytes,
+            "temperature": temperature,
+            "top_k": top_k,
+            "seed": seed,
+        },
+        "prompt": byte_display(result.prompt),
+        "generated": byte_display(result.generated),
+        "output": byte_display(result.output),
+        "metrics": generation_metrics(result),
+    }
+    if output is not None:
+        path = write_json(output, payload)
+        payload["report"] = str(path)
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="BLT Phase 2 MLX infrastructure")
+    parser = argparse.ArgumentParser(description="BLT research infrastructure")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("doctor", help="Check Apple/MLX capabilities")
     train = commands.add_parser("train-smoke", help="Overfit the deterministic tiny corpus")
@@ -289,6 +514,37 @@ def build_parser() -> argparse.ArgumentParser:
     soak.add_argument("--seconds", type=float, required=True)
     soak.add_argument("--window-seconds", type=float, default=60.0)
     soak.add_argument("--output", type=Path, required=True)
+    inspect_baseline = commands.add_parser(
+        "inspect-baseline",
+        help="Verify the frozen Stage 3 config, data, parameters, and untrained baseline",
+    )
+    inspect_baseline.add_argument("--config", type=Path, required=True)
+    inspect_baseline.add_argument("--output", type=Path, required=True)
+    train_baseline = commands.add_parser(
+        "train-baseline",
+        help="Train the frozen Stage 3 byte-GPT and write its checkpoint/report",
+    )
+    train_baseline.add_argument("--config", type=Path, required=True)
+    train_baseline.add_argument("--checkpoint", type=Path, required=True)
+    train_baseline.add_argument("--output", type=Path, required=True)
+    evaluate_baseline = commands.add_parser(
+        "evaluate-checkpoint",
+        help="Evaluate a Stage 3 checkpoint against its frozen validation split",
+    )
+    evaluate_baseline.add_argument("--config", type=Path, required=True)
+    evaluate_baseline.add_argument("--checkpoint", type=Path, required=True)
+    evaluate_baseline.add_argument("--output", type=Path, required=True)
+    generate_checkpoint = commands.add_parser(
+        "generate",
+        help="Generate bytes from a checkpoint with UTF-8-safe structured output",
+    )
+    generate_checkpoint.add_argument("--checkpoint", type=Path, required=True)
+    generate_checkpoint.add_argument("--prompt", required=True)
+    generate_checkpoint.add_argument("--max-new-bytes", type=int, default=32)
+    generate_checkpoint.add_argument("--temperature", type=float, default=0.0)
+    generate_checkpoint.add_argument("--top-k", type=int)
+    generate_checkpoint.add_argument("--seed", type=int, default=20260813)
+    generate_checkpoint.add_argument("--output", type=Path)
     return parser
 
 
@@ -320,6 +576,30 @@ def main(argv: list[str] | None = None) -> int:
             prompt=args.prompt,
             duration_seconds=args.seconds,
             window_seconds=args.window_seconds,
+            output=args.output,
+        )
+    if args.command == "inspect-baseline":
+        return inspect_stage3_baseline(config_path=args.config, output=args.output)
+    if args.command == "train-baseline":
+        return train_stage3_baseline(
+            config_path=args.config,
+            checkpoint=args.checkpoint,
+            output=args.output,
+        )
+    if args.command == "evaluate-checkpoint":
+        return evaluate_stage3_checkpoint(
+            config_path=args.config,
+            checkpoint=args.checkpoint,
+            output=args.output,
+        )
+    if args.command == "generate":
+        return generate_from_checkpoint(
+            checkpoint=args.checkpoint,
+            prompt=args.prompt,
+            max_new_bytes=args.max_new_bytes,
+            temperature=args.temperature,
+            top_k=args.top_k,
+            seed=args.seed,
             output=args.output,
         )
     raise AssertionError(f"unhandled command: {args.command}")

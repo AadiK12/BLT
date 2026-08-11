@@ -13,7 +13,7 @@ import mlx.optimizers as optim
 from mlx.utils import tree_flatten
 
 from blt_mlx.config import TrainingConfig
-from blt_mlx.data import ByteDataset
+from blt_mlx.data import LanguageModelDataset
 from blt_mlx.model import ByteGPT
 
 
@@ -21,14 +21,18 @@ def language_model_loss(
     model: ByteGPT,
     inputs: mx.array,
     targets: mx.array,
+    attention_mask: mx.array,
+    loss_mask: mx.array,
+    document_ids: mx.array,
 ) -> mx.array:
-    logits = model(inputs)
-    return mx.mean(
-        nn.losses.cross_entropy(
-            mx.reshape(logits, (-1, logits.shape[-1])),
-            mx.reshape(targets, (-1,)),
-        )
+    logits = model(
+        inputs,
+        attention_mask=attention_mask,
+        document_ids=document_ids,
     )
+    token_losses = nn.losses.cross_entropy(logits, targets, reduction="none")
+    denominator = mx.sum(loss_mask)
+    return mx.sum(token_losses * loss_mask) / mx.maximum(denominator, 1.0)
 
 
 def _all_finite(tree: object) -> bool:
@@ -101,16 +105,54 @@ class Trainer:
         self,
         inputs: mx.array,
         targets: mx.array,
+        attention_mask: mx.array,
+        loss_mask: mx.array,
+        document_ids: mx.array,
     ) -> tuple[mx.array, dict]:
-        loss, gradients = self._loss_and_grad(self.model, inputs, targets)
+        loss, gradients = self._loss_and_grad(
+            self.model,
+            inputs,
+            targets,
+            attention_mask,
+            loss_mask,
+            document_ids,
+        )
         self.optimizer.update(self.model, gradients)
         return loss, gradients
 
-    def step(self, inputs: mx.array, targets: mx.array) -> TrainingStep:
+    def step(
+        self,
+        inputs: mx.array,
+        targets: mx.array,
+        *,
+        attention_mask: mx.array | None = None,
+        loss_mask: mx.array | None = None,
+        document_ids: mx.array | None = None,
+    ) -> TrainingStep:
+        batch_shape = inputs.shape
+        attention_mask = (
+            mx.ones(batch_shape, dtype=mx.bool_)
+            if attention_mask is None
+            else attention_mask
+        )
+        loss_mask = (
+            mx.ones(batch_shape, dtype=mx.float32) if loss_mask is None else loss_mask
+        )
+        document_ids = (
+            mx.zeros(batch_shape, dtype=mx.int32)
+            if document_ids is None
+            else document_ids
+        )
         if mx.metal.is_available():
             mx.reset_peak_memory()
         started = time.perf_counter_ns()
-        loss, gradients = self._step_function(inputs, targets)
+        loss, gradients = self._step_function(
+            inputs,
+            targets,
+            attention_mask,
+            loss_mask,
+            document_ids,
+        )
         mx.eval(loss, self.model.parameters(), self.optimizer.state)
         mx.synchronize()
         duration_ms = (time.perf_counter_ns() - started) / 1_000_000.0
@@ -131,14 +173,27 @@ class Trainer:
             ),
         )
 
-    def train(self, dataset: ByteDataset, *, steps: int | None = None) -> TrainingReport:
+    def train(
+        self,
+        dataset: LanguageModelDataset,
+        *,
+        steps: int | None = None,
+    ) -> TrainingReport:
         step_count = self.config.steps if steps is None else int(steps)
         if step_count <= 0:
             raise ValueError("steps must be positive")
         observations: list[TrainingStep] = []
         for _ in range(step_count):
-            inputs, targets = dataset.batch(self.global_step)
-            observations.append(self.step(inputs, targets))
+            batch = dataset.language_model_batch(self.global_step)
+            observations.append(
+                self.step(
+                    batch.inputs,
+                    batch.targets,
+                    attention_mask=batch.attention_mask,
+                    loss_mask=batch.loss_mask,
+                    document_ids=batch.document_ids,
+                )
+            )
         losses = [observation.loss for observation in observations]
         return TrainingReport(
             initial_loss=losses[0],
@@ -150,7 +205,7 @@ class Trainer:
 
 def evaluate_loss(
     model: ByteGPT,
-    dataset: ByteDataset,
+    dataset: LanguageModelDataset,
     *,
     batches: int = 8,
 ) -> float:
@@ -158,8 +213,15 @@ def evaluate_loss(
         raise ValueError("batches must be positive")
     losses = []
     for index in range(batches):
-        inputs, targets = dataset.batch(index)
-        loss = language_model_loss(model, inputs, targets)
+        batch = dataset.language_model_batch(index)
+        loss = language_model_loss(
+            model,
+            batch.inputs,
+            batch.targets,
+            batch.attention_mask,
+            batch.loss_mask,
+            batch.document_ids,
+        )
         mx.eval(loss)
         losses.append(float(loss.item()))
     return sum(losses) / len(losses)
@@ -167,7 +229,7 @@ def evaluate_loss(
 
 def evaluate_bits_per_byte(
     model: ByteGPT,
-    dataset: ByteDataset,
+    dataset: LanguageModelDataset,
     *,
     batches: int = 8,
 ) -> float:

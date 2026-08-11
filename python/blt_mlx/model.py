@@ -66,6 +66,8 @@ class ByteGPT(nn.Module):
         self,
         token_ids: mx.array,
         *,
+        attention_mask: mx.array | None = None,
+        document_ids: mx.array | None = None,
         recorder: ShapeRecorder | None = None,
     ) -> mx.array:
         if token_ids.ndim != 2:
@@ -75,10 +77,23 @@ class ByteGPT(nn.Module):
         sequence = token_ids.shape[1]
         if sequence <= 0 or sequence > self.config.max_sequence_length:
             raise ValueError("sequence length is outside the model configuration")
+        expected_mask_shape = token_ids.shape
+        if attention_mask is not None and attention_mask.shape != expected_mask_shape:
+            raise ValueError("attention_mask must match token_ids")
+        if document_ids is not None and document_ids.shape != expected_mask_shape:
+            raise ValueError("document_ids must match token_ids")
         positions = mx.arange(sequence, dtype=mx.int32)
         hidden = self.byte_embedding(token_ids) + self.position_embedding[positions]
+        if attention_mask is not None:
+            hidden = hidden * attention_mask[..., None]
         for index, block in enumerate(self.blocks):
-            hidden = block(hidden, recorder=recorder, name=f"block_{index}")
+            hidden = block(
+                hidden,
+                attention_mask=attention_mask,
+                document_ids=document_ids,
+                recorder=recorder,
+                name=f"block_{index}",
+            )
         hidden = self.final_norm(hidden)
         return self.lm_head(hidden, recorder=recorder, name="lm_head")
 

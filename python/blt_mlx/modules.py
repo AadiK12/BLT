@@ -228,10 +228,16 @@ class CausalSelfAttention(nn.Module):
         self,
         inputs: mx.array,
         *,
+        attention_mask: mx.array | None = None,
+        document_ids: mx.array | None = None,
         recorder: ShapeRecorder | None = None,
         name: str,
     ) -> mx.array:
         batch, sequence, dimensions = inputs.shape
+        if attention_mask is not None and attention_mask.shape != (batch, sequence):
+            raise ValueError("attention_mask must have shape [batch, sequence]")
+        if document_ids is not None and document_ids.shape != (batch, sequence):
+            raise ValueError("document_ids must have shape [batch, sequence]")
         projected = self.qkv(inputs, recorder=recorder, name=f"{name}.qkv")
         query = projected[..., :dimensions]
         key = projected[..., dimensions : 2 * dimensions]
@@ -249,9 +255,24 @@ class CausalSelfAttention(nn.Module):
         value = split_heads(value)
         transposed_key = mx.transpose(key, (0, 1, 3, 2))
         scores = (query @ transposed_key) * (self.head_dimensions**-0.5)
-        mask = mx.triu(mx.full((sequence, sequence), -1.0e4, dtype=scores.dtype), k=1)
-        probabilities = stable_softmax(scores + mask, axis=-1)
+        positions = mx.arange(sequence)
+        allowed = positions[:, None] >= positions[None, :]
+        allowed = mx.broadcast_to(allowed[None, None, :, :], scores.shape)
+        if attention_mask is not None:
+            valid_queries = attention_mask[:, None, :, None]
+            valid_keys = attention_mask[:, None, None, :]
+            allowed = allowed & valid_queries & valid_keys
+        if document_ids is not None:
+            same_document = (
+                document_ids[:, None, :, None] == document_ids[:, None, None, :]
+            )
+            valid_document = document_ids[:, None, :, None] >= 0
+            allowed = allowed & same_document & valid_document
+        masked_scores = mx.where(allowed, scores, mx.array(-1.0e4, dtype=scores.dtype))
+        probabilities = stable_softmax(masked_scores, axis=-1)
         attended = probabilities @ value
+        if attention_mask is not None:
+            attended = attended * attention_mask[:, None, :, None]
         if recorder is not None:
             recorder.record(
                 name=f"{name}.scores",
@@ -270,7 +291,7 @@ class CausalSelfAttention(nn.Module):
             recorder.record(
                 name=f"{name}.softmax",
                 kind="softmax",
-                left=scores,
+                left=masked_scores,
                 output=probabilities,
             )
         attended = mx.transpose(attended, (0, 2, 1, 3))
@@ -313,11 +334,15 @@ class TransformerBlock(nn.Module):
         self,
         inputs: mx.array,
         *,
+        attention_mask: mx.array | None = None,
+        document_ids: mx.array | None = None,
         recorder: ShapeRecorder | None = None,
         name: str,
     ) -> mx.array:
         attended = self.attention(
             self.attention_norm(inputs),
+            attention_mask=attention_mask,
+            document_ids=document_ids,
             recorder=recorder,
             name=f"{name}.attention",
         )
@@ -327,4 +352,7 @@ class TransformerBlock(nn.Module):
             recorder=recorder,
             name=f"{name}.mlp",
         )
-        return residual + transformed
+        output = residual + transformed
+        if attention_mask is not None:
+            output = output * attention_mask[..., None]
+        return output

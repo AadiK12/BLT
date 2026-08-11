@@ -1,10 +1,11 @@
 # Byte Latent Transformer Project
 
 This repository is an educational path from transformer fundamentals to a small
-Byte Latent Transformer (BLT). Phase 2 infrastructure is complete: the project
-now has deterministic Java reference code, an Apple-Silicon-native MLX training
-path, handwritten Metal kernel candidates, correctness and causal tests,
-checkpointing, generation, shape tracing, and reproducible performance reports.
+Byte Latent Transformer (BLT). Phase 2 infrastructure and the Stage 3 byte-GPT
+baseline are complete: the project has deterministic Java reference code, an
+Apple-Silicon-native MLX training path, handwritten Metal kernel candidates, a
+frozen 108,032-parameter byte-GPT, packed-document masks, checkpoint-bound
+evaluation, generation, shape tracing, and reproducible performance reports.
 
 It is important to keep the current boundary precise: the trainable model is a
 **byte-level GPT baseline**, not yet a BLT. The expensive transformer still runs
@@ -17,6 +18,9 @@ Read the durable project references:
   finish lines, and next work.
 - [`docs/PHASE2_INFRASTRUCTURE.md`](docs/PHASE2_INFRASTRUCTURE.md) — what Phase 2
   built, how the layers fit together, commands, metrics, and limitations.
+- [`docs/STAGE3_BYTE_GPT_BASELINE.md`](docs/STAGE3_BYTE_GPT_BASELINE.md) — the
+  frozen model/data contract, parameter inventory, masks, lifecycle, and
+  verified Stage 3 evidence.
 - [`notebooks/01_stage_1_blt_research_readme.ipynb`](notebooks/01_stage_1_blt_research_readme.ipynb)
   — research framing and BLT architecture deep dive.
 
@@ -42,6 +46,7 @@ an Apple Silicon Mac with Metal support.
 make setup
 make doctor
 make phase2-smoke
+make stage3-smoke
 ```
 
 `make phase2-smoke` runs the Python and Java test suites, overfits the
@@ -57,6 +62,10 @@ make train-smoke            # tiny deterministic overfit + checkpoint
 make benchmark-shapes       # training/prefill/decode kernel evidence
 make benchmark-generation   # TTFT, TPOT, throughput, and peak memory
 make thermal-soak-short     # plumbing check, not a legitimate thermal study
+make stage3-inspect         # verify config, data hashes, and parameter count
+make stage3-train           # train the frozen byte-GPT checkpoint
+make stage3-evaluate        # held-out BPB and fixed generation prompts
+make stage3-generate        # UTF-8-safe text, bytes, hex, and latency
 ./gradlew run               # original Java forward-reference demo
 ```
 
@@ -91,5 +100,6 @@ uv run python app.py
 ```
 
 The next product-facing milestone is a simple checkpoint-backed generation UI.
-The next architecture milestone after the baseline is stable is a fixed-patch
-local/global/local model, followed by causal entropy patching.
+The next research milestone is a larger frozen train/validation/test protocol.
+The next architecture milestone is a fixed-patch local/global/local model,
+followed by causal entropy patching.

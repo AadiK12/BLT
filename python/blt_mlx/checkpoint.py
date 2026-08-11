@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import mlx.core as mx
 from mlx.utils import tree_flatten, tree_unflatten
@@ -18,9 +19,15 @@ from blt_mlx.training import Trainer
 class LoadedCheckpoint:
     model: ByteGPT
     trainer: Trainer
+    metadata: dict[str, Any]
 
 
-def save_checkpoint(path: Path, trainer: Trainer) -> Path:
+def save_checkpoint(
+    path: Path,
+    trainer: Trainer,
+    *,
+    run_metadata: dict[str, Any] | None = None,
+) -> Path:
     resolved = path.expanduser().resolve()
     resolved.mkdir(parents=True, exist_ok=True)
     trainer.model.save_weights(str(resolved / "model.safetensors"))
@@ -35,6 +42,7 @@ def save_checkpoint(path: Path, trainer: Trainer) -> Path:
         "global_step": trainer.global_step,
         "model": trainer.model.config.as_dict(),
         "training": trainer.config.as_dict(),
+        "run_metadata": run_metadata or {},
     }
     (resolved / "training_state.json").write_text(
         json.dumps(metadata, indent=2, sort_keys=True) + "\n",
@@ -62,4 +70,4 @@ def load_checkpoint(path: Path) -> LoadedCheckpoint:
     trainer.optimizer.state = tree_unflatten(sorted(optimizer_values.items()))
     trainer.rebuild_compiled_step()
     mx.eval(model.parameters(), trainer.optimizer.state)
-    return LoadedCheckpoint(model=model, trainer=trainer)
+    return LoadedCheckpoint(model=model, trainer=trainer, metadata=metadata)

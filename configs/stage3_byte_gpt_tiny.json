@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "name": "stage3-byte-gpt-tiny-v1",
+  "expected_parameter_count": 108032,
+  "model": {
+    "schema_version": 1,
+    "vocab_size": 256,
+    "max_sequence_length": 128,
+    "d_model": 64,
+    "num_layers": 2,
+    "num_heads": 4,
+    "mlp_hidden_size": 128,
+    "seed": 20260821,
+    "dtype": "float32",
+    "matmul_strategy": "mlx",
+    "fusion_strategy": "mlx_compiled"
+  },
+  "training": {
+    "schema_version": 1,
+    "steps": 10,
+    "batch_size": 8,
+    "sequence_length": 64,
+    "learning_rate": 0.001,
+    "weight_decay": 0.01,
+    "seed": 20260822,
+    "compile_step": true,
+    "log_every": 10
+  },
+  "dataset": {
+    "name": "stage3-authored-byte-corpus-v1",
+    "document_separator": "\n<|document|>\n",
+    "train": {
+      "path": "../data/stage3/train.txt",
+      "sha256": "3ed7429796ca5c0e1791e93db46e0c22211669c462c9458a74c5d43ef0d33c48"
+    },
+    "validation": {
+      "path": "../data/stage3/validation.txt",
+      "sha256": "260485e7bbe757baceb453c33864a32d989b6e61d1ecaa02a273775b027eb65a"
+    }
+  },
+  "evaluation": {
+    "batches": 8,
+    "max_new_bytes": 32,
+    "prompts": [
+      "Byte ",
+      "A causal ",
+      "Unicode "
+    ]
+  }
+}

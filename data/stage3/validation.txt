@@ -1,0 +1,5 @@
+A byte-level baseline gives the future latent-patch model a fair control for quality, speed, and memory.
+<|document|>
+Previously unseen text can contain punctuation, code_like_names, accented words such as résumé, and emoji such as 🧪.
+<|document|>
+Document masks prevent one packed example from borrowing context from the document that happened to precede it.

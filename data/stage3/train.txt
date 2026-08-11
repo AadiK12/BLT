@@ -1,0 +1,15 @@
+Byte models read UTF-8 as values from zero through two hundred fifty-five. They predict the next byte without a tokenizer.
+<|document|>
+A causal transformer may use the current prefix, but it must never inspect a future byte. Masks make that rule executable.
+<|document|>
+The local encoder will eventually organize bytes into patches. The global model will process fewer patch positions.
+<|document|>
+Hardware-aware code begins with a trusted baseline. Correct output comes before median latency, tail latency, and memory.
+<|document|>
+Unicode remains bytes too: café, naïve, Δ, 東京, and 🚀 all become deterministic UTF-8 sequences.
+<|document|>
+def next_byte(prefix):
+    logits = model(prefix)
+    return argmax(logits[-1])
+
+Small transparent systems make causal bugs and measurement mistakes easier to find.
