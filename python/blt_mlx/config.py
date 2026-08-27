@@ -10,6 +10,7 @@ import mlx.core as mx
 MatmulStrategy = Literal["mlx", "metal_naive", "metal_tiled16"]
 FusionStrategy = Literal["mlx_eager", "mlx_compiled", "metal_fused"]
 DTypeName = Literal["float32", "float16", "bfloat16"]
+LearningRateSchedule = Literal["constant", "warmup_cosine"]
 
 
 def resolve_dtype(name: DTypeName) -> mx.Dtype:
@@ -87,9 +88,16 @@ class TrainingConfig:
     seed: int = 20260812
     compile_step: bool = True
     log_every: int = 10
+    learning_rate_schedule: LearningRateSchedule = "constant"
+    warmup_steps: int = 0
+    minimum_learning_rate_ratio: float = 0.1
+    gradient_clip_norm: float | None = None
+    beta1: float = 0.9
+    beta2: float = 0.999
+    epsilon: float = 1e-8
 
     def __post_init__(self) -> None:
-        if self.schema_version != 1:
+        if self.schema_version not in {1, 2}:
             raise ValueError("unsupported training configuration schema")
         if self.steps <= 0 or self.batch_size <= 0 or self.sequence_length <= 0:
             raise ValueError("steps, batch_size, and sequence_length must be positive")
@@ -99,6 +107,22 @@ class TrainingConfig:
             raise ValueError("weight_decay must be non-negative")
         if self.log_every <= 0:
             raise ValueError("log_every must be positive")
+        if self.learning_rate_schedule not in {"constant", "warmup_cosine"}:
+            raise ValueError("unsupported learning-rate schedule")
+        if self.warmup_steps < 0 or self.warmup_steps >= self.steps:
+            raise ValueError("warmup_steps must be non-negative and less than steps")
+        if self.learning_rate_schedule == "constant" and self.warmup_steps != 0:
+            raise ValueError("constant learning rate requires zero warmup steps")
+        if self.learning_rate_schedule == "warmup_cosine" and self.warmup_steps == 0:
+            raise ValueError("warmup_cosine requires at least one warmup step")
+        if not 0.0 <= self.minimum_learning_rate_ratio <= 1.0:
+            raise ValueError("minimum_learning_rate_ratio must be between zero and one")
+        if self.gradient_clip_norm is not None and self.gradient_clip_norm <= 0.0:
+            raise ValueError("gradient_clip_norm must be positive when configured")
+        if not 0.0 <= self.beta1 < 1.0 or not 0.0 <= self.beta2 < 1.0:
+            raise ValueError("AdamW beta values must be in [0, 1)")
+        if self.epsilon <= 0.0:
+            raise ValueError("epsilon must be positive")
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -1,4 +1,4 @@
-.PHONY: setup doctor test test-python test-java lint java-run train-smoke phase2-smoke benchmark-shapes benchmark-generation thermal-soak-short stage3-inspect stage3-train stage3-evaluate stage3-generate stage3-smoke clean-generated
+.PHONY: setup doctor test test-python test-java lint java-run train-smoke phase2-smoke benchmark-shapes benchmark-generation thermal-soak-short stage3-inspect stage3-train stage3-evaluate stage3-generate stage3-smoke phase4-prepare phase4-inspect phase4-train phase4-smoke phase4-final-test clean-generated
 
 setup:
 	uv sync --frozen --extra apple --extra dev
@@ -73,6 +73,34 @@ stage3-generate: stage3-train
 		--output artifacts/stage3/generation.json
 
 stage3-smoke: doctor test stage3-inspect stage3-train stage3-evaluate stage3-generate
+
+phase4-prepare:
+	uv run blt-lab phase4-prepare \
+		--config configs/phase4_alice_byte_gpt.json \
+		--output artifacts/phase4/preparation_report.json
+
+phase4-inspect: phase4-prepare
+	uv run blt-lab phase4-inspect \
+		--config configs/phase4_alice_byte_gpt.json \
+		--output artifacts/phase4/inspection.json
+
+phase4-train: phase4-prepare
+	uv run blt-lab phase4-train \
+		--config configs/phase4_alice_byte_gpt.json \
+		--run-directory artifacts/phase4/run
+
+phase4-smoke: doctor test phase4-inspect
+	uv run blt-lab phase4-train \
+		--config configs/phase4_alice_byte_gpt.json \
+		--run-directory artifacts/phase4/smoke-run \
+		--max-steps-this-run 50
+
+phase4-final-test:
+	uv run blt-lab phase4-final-test \
+		--config configs/phase4_alice_byte_gpt.json \
+		--selection artifacts/phase4/run/selection.json \
+		--acknowledgement I_UNDERSTAND_THIS_CONSUMES_THE_FINAL_TEST_SET \
+		--output artifacts/phase4/final_test.json
 
 clean-generated:
 	./gradlew clean

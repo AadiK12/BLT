@@ -1,11 +1,14 @@
 # Byte Latent Transformer Project
 
 This repository is an educational path from transformer fundamentals to a small
-Byte Latent Transformer (BLT). Phase 2 infrastructure and the Stage 3 byte-GPT
-baseline are complete: the project has deterministic Java reference code, an
-Apple-Silicon-native MLX training path, handwritten Metal kernel candidates, a
-frozen 108,032-parameter byte-GPT, packed-document masks, checkpoint-bound
-evaluation, generation, shape tracing, and reproducible performance reports.
+Byte Latent Transformer (BLT). Phase 2 infrastructure, the Stage 3 byte-GPT
+baseline, and the Phase 4 research-training system are complete. The project has
+deterministic Java reference code, an Apple-Silicon-native MLX training path,
+handwritten Metal kernel candidates, a frozen 108,032-parameter byte-GPT,
+packed-document masks, a hash-pinned public-domain corpus, warmup/cosine
+training with gradient clipping, validation-based checkpoint selection, a
+one-shot held-out test protocol, generation, and reproducible performance
+reports.
 
 It is important to keep the current boundary precise: the trainable model is a
 **byte-level GPT baseline**, not yet a BLT. The expensive transformer still runs
@@ -21,6 +24,9 @@ Read the durable project references:
 - [`docs/STAGE3_BYTE_GPT_BASELINE.md`](docs/STAGE3_BYTE_GPT_BASELINE.md) — the
   frozen model/data contract, parameter inventory, masks, lifecycle, and
   verified Stage 3 evidence.
+- [`docs/PHASE4_RESEARCH_TRAINING.md`](docs/PHASE4_RESEARCH_TRAINING.md) — the
+  external-corpus contract, scheduled/clipped training, resume and checkpoint
+  selection, sealed-test policy, verified M1 Max result, and claim boundary.
 - [`notebooks/01_stage_1_blt_research_readme.ipynb`](notebooks/01_stage_1_blt_research_readme.ipynb)
   — research framing and BLT architecture deep dive.
 
@@ -47,6 +53,7 @@ make setup
 make doctor
 make phase2-smoke
 make stage3-smoke
+make phase4-smoke
 ```
 
 `make phase2-smoke` runs the Python and Java test suites, overfits the
@@ -66,6 +73,10 @@ make stage3-inspect         # verify config, data hashes, and parameter count
 make stage3-train           # train the frozen byte-GPT checkpoint
 make stage3-evaluate        # held-out BPB and fixed generation prompts
 make stage3-generate        # UTF-8-safe text, bytes, hex, and latency
+make phase4-prepare         # verify and chapter-split the pinned external corpus
+make phase4-inspect         # check model, data, schedule, and step-0 validation
+make phase4-train           # scheduled/clipped run with validation selection
+make phase4-final-test      # explicitly consume the sealed test once
 ./gradlew run               # original Java forward-reference demo
 ```
 
@@ -100,6 +111,6 @@ uv run python app.py
 ```
 
 The next product-facing milestone is a simple checkpoint-backed generation UI.
-The next research milestone is a larger frozen train/validation/test protocol.
 The next architecture milestone is a fixed-patch local/global/local model,
-followed by causal entropy patching.
+followed by causal entropy patching and controlled comparison against this
+frozen byte-GPT protocol.

@@ -17,6 +17,24 @@ from blt_mlx.data import LanguageModelDataset
 from blt_mlx.model import ByteGPT
 
 
+def learning_rate_schedule(config: TrainingConfig):
+    """Build the exact optimizer schedule recorded by the training config."""
+
+    if config.learning_rate_schedule == "constant":
+        return config.learning_rate
+    warmup = optim.linear_schedule(
+        0.0,
+        config.learning_rate,
+        config.warmup_steps,
+    )
+    decay = optim.cosine_decay(
+        config.learning_rate,
+        config.steps - config.warmup_steps,
+        config.learning_rate * config.minimum_learning_rate_ratio,
+    )
+    return optim.join_schedules([warmup, decay], [config.warmup_steps])
+
+
 def language_model_loss(
     model: ByteGPT,
     inputs: mx.array,
@@ -51,6 +69,9 @@ class TrainingStep:
     duration_ms: float
     active_memory_bytes: int | None
     peak_memory_bytes: int | None
+    learning_rate: float
+    gradient_norm: float
+    gradient_clipped: bool
 
 
 @dataclass(frozen=True)
@@ -79,7 +100,9 @@ class Trainer:
         self.config = config
         self.global_step = int(start_step)
         self.optimizer = optim.AdamW(
-            learning_rate=config.learning_rate,
+            learning_rate=learning_rate_schedule(config),
+            betas=[config.beta1, config.beta2],
+            eps=config.epsilon,
             weight_decay=config.weight_decay,
         )
         self.optimizer.init(model.trainable_parameters())
@@ -108,7 +131,7 @@ class Trainer:
         attention_mask: mx.array,
         loss_mask: mx.array,
         document_ids: mx.array,
-    ) -> tuple[mx.array, dict]:
+    ) -> tuple[mx.array, dict, mx.array]:
         loss, gradients = self._loss_and_grad(
             self.model,
             inputs,
@@ -117,8 +140,20 @@ class Trainer:
             loss_mask,
             document_ids,
         )
+        if self.config.gradient_clip_norm is not None:
+            gradients, gradient_norm = optim.clip_grad_norm(
+                gradients,
+                self.config.gradient_clip_norm,
+            )
+        else:
+            gradient_norm_squared = sum(
+                mx.sum(value * value)
+                for _, value in tree_flatten(gradients)
+                if isinstance(value, mx.array)
+            )
+            gradient_norm = mx.sqrt(gradient_norm_squared)
         self.optimizer.update(self.model, gradients)
-        return loss, gradients
+        return loss, gradients, gradient_norm
 
     def step(
         self,
@@ -146,20 +181,27 @@ class Trainer:
         if mx.metal.is_available():
             mx.reset_peak_memory()
         started = time.perf_counter_ns()
-        loss, gradients = self._step_function(
+        loss, gradients, gradient_norm = self._step_function(
             inputs,
             targets,
             attention_mask,
             loss_mask,
             document_ids,
         )
-        mx.eval(loss, self.model.parameters(), self.optimizer.state)
+        mx.eval(
+            loss,
+            gradient_norm,
+            self.model.parameters(),
+            self.optimizer.state,
+        )
         mx.synchronize()
         duration_ms = (time.perf_counter_ns() - started) / 1_000_000.0
         if not bool(mx.isfinite(loss).item()):
             raise FloatingPointError("training loss became non-finite")
         if not _all_finite(gradients):
             raise FloatingPointError("training gradients became non-finite")
+        gradient_norm_value = float(gradient_norm.item())
+        learning_rate_value = float(self.optimizer.learning_rate.item())
         self.global_step += 1
         return TrainingStep(
             step=self.global_step,
@@ -170,6 +212,12 @@ class Trainer:
             ),
             peak_memory_bytes=(
                 int(mx.get_peak_memory()) if mx.metal.is_available() else None
+            ),
+            learning_rate=learning_rate_value,
+            gradient_norm=gradient_norm_value,
+            gradient_clipped=(
+                self.config.gradient_clip_norm is not None
+                and gradient_norm_value > self.config.gradient_clip_norm
             ),
         )
 

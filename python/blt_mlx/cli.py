@@ -30,7 +30,23 @@ from blt_mlx.performance import (
     trace_model_shape_suite,
     write_json,
 )
-from blt_mlx.training import Trainer, evaluate_bits_per_byte, evaluate_loss
+from blt_mlx.phase4 import (
+    Phase4ExperimentConfig,
+    load_phase4_dataset,
+    load_phase4_manifest,
+    prepare_phase4_corpus,
+)
+from blt_mlx.research import (
+    FINAL_TEST_ACKNOWLEDGEMENT,
+    evaluate_phase4_final_test,
+    train_phase4_experiment,
+)
+from blt_mlx.training import (
+    Trainer,
+    evaluate_bits_per_byte,
+    evaluate_loss,
+    learning_rate_schedule,
+)
 
 
 def _tiny_model_config(*, dtype: str = "float32") -> ModelConfig:
@@ -477,6 +493,143 @@ def generate_from_checkpoint(
     return 0
 
 
+def prepare_phase4(*, config_path: Path, output: Path) -> int:
+    config = Phase4ExperimentConfig.load(config_path)
+    manifest = prepare_phase4_corpus(config)
+    payload = {
+        "schema_version": 1,
+        "status": "complete",
+        "experiment": config.name,
+        "config": str(config.source_path),
+        "config_sha256": sha256_file(config.source_path),
+        "manifest": manifest,
+        "manifest_path": str(config.manifest_path),
+        "manifest_sha256": sha256_file(config.manifest_path),
+    }
+    path = write_json(output, payload)
+    print(json.dumps({"status": "complete", "output": str(path)}, indent=2))
+    return 0
+
+
+def inspect_phase4(*, config_path: Path, output: Path) -> int:
+    config = Phase4ExperimentConfig.load(config_path)
+    manifest = load_phase4_manifest(config)
+    model = ByteGPT(config.model)
+    parameters = config.validate_model(model)
+    validation = load_phase4_dataset(config, "validation")
+    untrained_loss = evaluate_loss(
+        model,
+        validation,
+        batches=config.evaluation.validation_batches,
+    )
+    schedule = learning_rate_schedule(config.training)
+    schedule_steps = sorted(
+        {
+            0,
+            config.training.warmup_steps,
+            config.training.steps // 2,
+            config.training.steps,
+        }
+    )
+    schedule_values = {
+        str(step): (
+            float(schedule)
+            if isinstance(schedule, float)
+            else float(schedule(mx.array(step)).item())
+        )
+        for step in schedule_steps
+    }
+    payload = {
+        "schema_version": 1,
+        "environment": environment_metadata(),
+        "experiment": config.as_dict(),
+        "experiment_config_sha256": sha256_file(config.source_path),
+        "corpus_manifest": manifest,
+        "corpus_manifest_sha256": sha256_file(config.manifest_path),
+        "parameters": parameters,
+        "learning_rate_schedule": schedule_values,
+        "untrained_validation": {
+            "cross_entropy_nats": untrained_loss,
+            "bits_per_byte": untrained_loss / math.log(2.0),
+            "batches": config.evaluation.validation_batches,
+        },
+        "test_evaluated": False,
+    }
+    path = write_json(output, payload)
+    print(json.dumps({"status": "complete", "output": str(path)}, indent=2))
+    return 0
+
+
+def train_phase4(
+    *,
+    config_path: Path,
+    run_directory: Path,
+    resume_checkpoint: Path | None,
+    max_steps_this_run: int | None,
+) -> int:
+    config = Phase4ExperimentConfig.load(config_path)
+    payload = train_phase4_experiment(
+        config=config,
+        run_directory=run_directory,
+        resume_checkpoint=resume_checkpoint,
+        max_steps_this_run=max_steps_this_run,
+    )
+    print(
+        json.dumps(
+            {
+                "status": payload["status"],
+                "report": str(run_directory.expanduser().resolve() / "training_report.json"),
+                "final_step": payload["final_step"],
+                "best_step": payload["best_step"],
+                "best_validation_bits_per_byte": payload[
+                    "best_validation_bits_per_byte"
+                ],
+                "best_checkpoint": payload["best_checkpoint"],
+                "test_evaluated": False,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def test_phase4(
+    *,
+    config_path: Path,
+    checkpoint: Path | None,
+    selection: Path | None,
+    output: Path,
+    acknowledgement: str,
+) -> int:
+    if checkpoint is None:
+        if selection is None:
+            raise ValueError("checkpoint or selection is required")
+        selection_payload = json.loads(
+            selection.expanduser().resolve().read_text(encoding="utf-8")
+        )
+        checkpoint = Path(selection_payload["best_checkpoint"])
+    config = Phase4ExperimentConfig.load(config_path)
+    payload = evaluate_phase4_final_test(
+        config=config,
+        checkpoint=checkpoint,
+        output=output,
+        acknowledgement=acknowledgement,
+    )
+    print(
+        json.dumps(
+            {
+                "status": "complete",
+                "output": str(output.expanduser().resolve()),
+                "checkpoint_step": payload["checkpoint_step"],
+                "test_bits_per_byte": payload["test"]["bits_per_byte"],
+                "test_evaluated": True,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="BLT research infrastructure")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -545,6 +698,40 @@ def build_parser() -> argparse.ArgumentParser:
     generate_checkpoint.add_argument("--top-k", type=int)
     generate_checkpoint.add_argument("--seed", type=int, default=20260813)
     generate_checkpoint.add_argument("--output", type=Path)
+    prepare_research = commands.add_parser(
+        "phase4-prepare",
+        help="Download, verify, and chapter-split the pinned external corpus",
+    )
+    prepare_research.add_argument("--config", type=Path, required=True)
+    prepare_research.add_argument("--output", type=Path, required=True)
+    inspect_research = commands.add_parser(
+        "phase4-inspect",
+        help="Inspect Phase 4 model, corpus, schedule, and untrained validation",
+    )
+    inspect_research.add_argument("--config", type=Path, required=True)
+    inspect_research.add_argument("--output", type=Path, required=True)
+    train_research = commands.add_parser(
+        "phase4-train",
+        help="Train or resume with scheduled validation and checkpoints",
+    )
+    train_research.add_argument("--config", type=Path, required=True)
+    train_research.add_argument("--run-directory", type=Path, required=True)
+    train_research.add_argument("--resume-checkpoint", type=Path)
+    train_research.add_argument("--max-steps-this-run", type=int)
+    final_test = commands.add_parser(
+        "phase4-final-test",
+        help="Evaluate the validation-selected checkpoint once on sealed test data",
+    )
+    final_test.add_argument("--config", type=Path, required=True)
+    checkpoint_source = final_test.add_mutually_exclusive_group(required=True)
+    checkpoint_source.add_argument("--checkpoint", type=Path)
+    checkpoint_source.add_argument("--selection", type=Path)
+    final_test.add_argument("--output", type=Path, required=True)
+    final_test.add_argument(
+        "--acknowledgement",
+        help=f"required exact value: {FINAL_TEST_ACKNOWLEDGEMENT}",
+        required=True,
+    )
     return parser
 
 
@@ -601,6 +788,25 @@ def main(argv: list[str] | None = None) -> int:
             top_k=args.top_k,
             seed=args.seed,
             output=args.output,
+        )
+    if args.command == "phase4-prepare":
+        return prepare_phase4(config_path=args.config, output=args.output)
+    if args.command == "phase4-inspect":
+        return inspect_phase4(config_path=args.config, output=args.output)
+    if args.command == "phase4-train":
+        return train_phase4(
+            config_path=args.config,
+            run_directory=args.run_directory,
+            resume_checkpoint=args.resume_checkpoint,
+            max_steps_this_run=args.max_steps_this_run,
+        )
+    if args.command == "phase4-final-test":
+        return test_phase4(
+            config_path=args.config,
+            checkpoint=args.checkpoint,
+            selection=args.selection,
+            output=args.output,
+            acknowledgement=args.acknowledgement,
         )
     raise AssertionError(f"unhandled command: {args.command}")
 

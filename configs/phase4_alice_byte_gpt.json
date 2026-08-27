@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "name": "phase4-alice-byte-gpt-v1",
+  "expected_parameter_count": 108032,
+  "model": {
+    "schema_version": 1,
+    "vocab_size": 256,
+    "max_sequence_length": 128,
+    "d_model": 64,
+    "num_layers": 2,
+    "num_heads": 4,
+    "mlp_hidden_size": 128,
+    "seed": 20260821,
+    "dtype": "float32",
+    "matmul_strategy": "mlx",
+    "fusion_strategy": "mlx_compiled"
+  },
+  "training": {
+    "schema_version": 2,
+    "steps": 400,
+    "batch_size": 8,
+    "sequence_length": 128,
+    "learning_rate": 0.001,
+    "weight_decay": 0.01,
+    "seed": 20260822,
+    "compile_step": true,
+    "log_every": 10,
+    "learning_rate_schedule": "warmup_cosine",
+    "warmup_steps": 40,
+    "minimum_learning_rate_ratio": 0.1,
+    "gradient_clip_norm": 1.0,
+    "beta1": 0.9,
+    "beta2": 0.95,
+    "epsilon": 1e-8
+  },
+  "corpus": {
+    "name": "project-gutenberg-alice-11-2025-06-26",
+    "title": "Alice's Adventures in Wonderland",
+    "author": "Lewis Carroll",
+    "source_page": "https://www.gutenberg.org/ebooks/11",
+    "source_url": "https://www.gutenberg.org/cache/epub/11/pg11.txt",
+    "license": "Project Gutenberg eBook; public domain in the USA. Check local law outside the USA.",
+    "raw_sha256": "01b38ea4c710a84bc18d0bd41271a5a1a92b94e97b2812f4dece97d4a694725e",
+    "start_marker": "*** START OF THE PROJECT GUTENBERG EBOOK ALICE'S ADVENTURES IN WONDERLAND ***",
+    "end_marker": "*** END OF THE PROJECT GUTENBERG EBOOK ALICE'S ADVENTURES IN WONDERLAND ***",
+    "expected_chapters": 12,
+    "document_separator": "\n<|document|>\n",
+    "prepared_directory": "../artifacts/phase4/corpus",
+    "train": {
+      "chapters": [1, 2, 3, 4, 5, 6, 7, 8],
+      "expected_sha256": "042232cec051860ca40c6751cee8ab151ebb22e0f32a5024919608fb515404b4"
+    },
+    "validation": {
+      "chapters": [9, 10],
+      "expected_sha256": "4d32d32ac4fd61a6d2c07f4d9ff674ca2cbb416deffc4fe5bd0d3bf6935d17da"
+    },
+    "test": {
+      "chapters": [11, 12],
+      "expected_sha256": "8d187d5ff917d46c03be5f1586666cb4610796560e1aec76c39c9cc67cd90c7e"
+    }
+  },
+  "evaluation": {
+    "validation_every": 50,
+    "validation_batches": 24,
+    "checkpoint_every": 100,
+    "test_batches": 48,
+    "max_new_bytes": 64,
+    "prompts": [
+      "Alice was beginning",
+      "The Queen said",
+      "The White Rabbit"
+    ]
+  }
+}

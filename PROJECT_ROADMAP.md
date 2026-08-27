@@ -32,17 +32,19 @@ The primary research references are:
 
 ## Current project status
 
-Last verified: **August 11, 2026**
+Last verified: **August 23, 2026**
 
 Current repository state:
 
 - Branch: `main`
 - The deterministic Java reference builds and tests through the pinned Gradle 8.10.2 wrapper; 12 JUnit tests cover tensor math, normalization, initialization, model shape, and causal behavior.
 - The self-contained Python/MLX path trains a byte-level GPT on the Apple GPU, saves model and optimizer state, reloads exact logits, resumes the optimizer step, and generates bytes with greedy, temperature, or top-k decoding.
-- Seventeen Python tests cover pure references, custom Metal forward/backward behavior, model determinism and causality, packed-document and padding masks, checkpoint/config binding, checkpoint/resume, Stage 3 CLI integration, shape-derived comparisons, and generation metrics.
+- Nineteen Python tests cover pure references, custom Metal forward/backward behavior, model determinism and causality, packed-document and padding masks, checkpoint/config binding, checkpoint/resume, Stage 3 and Phase 4 lifecycle integration, schedule/clipping behavior, test sealing, shape-derived comparisons, and generation metrics.
 - The verified 80-step tiny-corpus smoke run reduced loss from 6.09 to 0.63 and evaluation bits per byte from 8.86 to 0.98.
 - The frozen Stage 3 baseline contains 108,032 parameters, committed train/validation data with enforced SHA-256 hashes, document-aware attention/loss masks, exact config-bound checkpoints, held-out BPB evaluation, and UTF-8-safe structured generation.
 - The verified 10-step Stage 3 run reduced training loss from 5.92 to 2.89 and authored validation BPB from 8.59 to 4.83. This is a deterministic teaching result, not an untouched research test result.
+- Phase 4 freezes Project Gutenberg ebook 11 by exact raw and split hashes, separates chapters I-VIII/IX-X/XI-XII into train/validation/sealed test, trains with warmup/cosine AdamW and gradient clipping, validates every 50 steps, selects checkpoints only by validation BPB, and prevents a consumed run from being retrained or retested.
+- The verified Phase 4 run selected step 350 at 3.5529 validation BPB, down from 8.6380 before training, and then achieved 3.4620 BPB in its one-shot held-out test evaluation. Greedy text remained repetitive, so this is next-byte-learning evidence rather than a language-quality claim.
 - Performance infrastructure traces training, prefill, and decode shapes; runs balanced interleaved MLX-versus-Metal comparisons; gates on complete-output correctness, median, and p95; and records environment and memory.
 - Checkpoint-level measurement exposes TTFT, TPOT, end-to-end latency, bytes per second, peak memory, and windowed thermal-soak plumbing.
 - The Stage 1 notebook and separate Gradio patching lab remain the research and visualization surfaces.
@@ -51,7 +53,7 @@ Current repository state:
 
 The most accurate description is:
 
-> The research framing, Phase 2 foundation, and Stage 3 frozen byte-GPT baseline are complete. The repository has a deterministic, trainable, checkpointed and evaluated MLX baseline plus a tested Java reference and hardware-aware measurement harness. It still does not have the local/global/local latent-patch hierarchy required to call the model a Byte Latent Transformer.
+> The research framing, Phase 2 foundation, Stage 3 frozen byte-GPT baseline, and Phase 4 research-training protocol are complete. The repository has a deterministic, trainable, checkpointed and one-shot-tested MLX control plus a tested Java reference and hardware-aware measurement harness. It still does not have the local/global/local latent-patch hierarchy required to call the model a Byte Latent Transformer.
 
 ### Current architecture
 
@@ -82,7 +84,7 @@ The distinction matters: processing raw bytes does not by itself make a model a 
 | 1. Research framing | Complete | Keep claims and references current as implementation evolves |
 | 2. Tensor and neural-network foundations | Complete | Preserve correctness gates while extending the kernel experiments |
 | 3. Byte-GPT baseline | Complete for the frozen authored fixture | Preserve the contract as later architectures are introduced |
-| 4. Training system | Deterministic authored-data path works; research pipeline partial | Add a larger external corpus, untouched test split, clipping/schedules, and longer-run reporting |
+| 4. Training system | Complete for the frozen Alice v1 experiment | Preserve the sealed result and reuse its contract for later architecture comparisons |
 | 5. Tiny trained model and UI | Checkpoint exists; trained-model UI not started | Load the learned checkpoint in a browser and expose byte-level inspection |
 | 6. Actual BLT architecture | Not started; toy patch routing only | Bytes are dynamically grouped into learned latent patches and processed by the local/global/local hierarchy |
 | 7. Experiments and conclusions | Designed; execution not started | Freeze the protocol and seed list, run the controlled comparisons, and report the evidence |
@@ -332,7 +334,12 @@ Stage 3 is complete when:
 
 Turn the byte model into a model that learns next-byte prediction from text.
 
-The deterministic tiny-corpus path is implemented and has crossed its mechanical exit criteria. The broader research training pipeline remains partial: it still needs frozen external data, train/validation splits, dataset hashes, clipping and schedule controls, and longer-run reporting. BLT-specific architecture should not replace this baseline until those comparison inputs are frozen.
+The deterministic tiny-corpus path and the first external-corpus research path
+are implemented. [`configs/phase4_alice_byte_gpt.json`](configs/phase4_alice_byte_gpt.json)
+freezes the model, optimizer, Project Gutenberg source identity, chapter splits,
+evaluation cadence, prompts, and one-shot test rule. The full design, commands,
+verified evidence, and claim boundary are recorded in
+[`docs/PHASE4_RESEARCH_TRAINING.md`](docs/PHASE4_RESEARCH_TRAINING.md).
 
 ## Required components
 
@@ -422,7 +429,14 @@ The tiny training system exposes one reproducible command:
 make train-smoke
 ```
 
-A later research command should accept frozen configuration and dataset files rather than embedding the smoke fixture.
+The research lifecycle accepts frozen configuration and dataset evidence:
+
+```bash
+make phase4-prepare
+make phase4-inspect
+make phase4-train
+make phase4-final-test
+```
 
 ## Tests and verification
 
@@ -433,9 +447,13 @@ Current verification status:
 - [x] Saving and loading preserve logits exactly.
 - [x] Resuming training preserves the optimizer step and state.
 - [x] A deliberately tiny dataset can be overfit.
-- [ ] Add a direct parameter-delta assertion after one optimizer step.
-- [ ] Add gradient clipping and a clipping test.
-- [ ] Add a two-run early-loss reproducibility assertion.
+- [x] A direct parameter-delta assertion verifies that optimization changes weights.
+- [x] Gradient clipping records its pre-clipping norm and has an activation test.
+- [x] Two independently initialized runs produce identical early losses.
+- [x] Raw and prepared corpus hashes fail closed.
+- [x] Validation selects checkpoints without loading test bytes.
+- [x] Partial training restores optimizer/global-step state and validation history.
+- [x] Final evaluation requires explicit acknowledgement and seals the consumed run.
 
 ## Completion criteria
 
@@ -447,8 +465,15 @@ Stage 4 is complete when the model can:
 - [x] Save a checkpoint.
 - [x] Reload the checkpoint and produce identical logits.
 - [x] Resume training without resetting the optimizer step or state.
+- [x] Train on a frozen public-domain corpus with disjoint chapter-level splits.
+- [x] Use validation-only checkpoint selection and a sealed held-out test.
+- [x] Record learning rate, gradient norms/clipping, memory, latency, and BPB.
+- [x] Bind checkpoints to the exact experiment and corpus-manifest hashes.
+- [x] Preserve a one-shot test report and reject further mutation of the run.
 
-These checks complete the tiny training-system slice. The frozen research data and evaluation requirements above remain before Stage 4 can be treated as a complete experimental pipeline.
+These checks complete Stage 4 for the Alice v1 experiment. Future architecture
+comparisons should reuse the external metric and evidence contract while using
+new versioned experiments rather than reopening this consumed test result.
 
 ---
 
@@ -460,18 +485,25 @@ Make the trained byte model easy to run, observe, and understand through a simpl
 
 ## Current status
 
-The trained-model UI has not started, but a learned smoke checkpoint can now be produced with `make train-smoke`, so its prerequisite exists. The repository also contains a separate [`visualizer/`](visualizer/) Gradio lab that explains patch-routing policies with a live in-page animation. That lab is useful Stage 1 infrastructure, but it does not load the checkpoint, generate learned text, or satisfy this stage's completion criteria.
+The trained-model UI has not started, but Phase 4 now produces a
+validation-selected external-corpus checkpoint and structured generation
+evidence. The repository also contains a separate [`visualizer/`](visualizer/)
+Gradio lab that explains patch-routing policies with a live in-page animation.
+That lab is useful Stage 1 infrastructure, but it does not load the checkpoint,
+generate learned text, or satisfy this stage's completion criteria.
 
-The next UI should load the Phase 2 smoke checkpoint and clearly label its tiny-corpus scope. It should not imply general language quality or a learned BLT.
+The next UI should load the Phase 4 step-350 checkpoint by default and clearly
+label its single-book, 400-step scope. It should not imply general language
+quality or a learned BLT.
 
 ## Tiny-model proof
 
-The `make train-smoke` checkpoint and report now demonstrate:
+The Phase 4 checkpoint and report now demonstrate:
 
-- A known training corpus.
-- A recorded loss curve.
-- Successful overfitting.
-- Recognizable byte generation.
+- A hash-pinned training corpus.
+- A recorded training and validation curve.
+- A validation-selected checkpoint and sealed-test result.
+- Learned but repetitive byte generation.
 - Deterministic checkpoint loading.
 
 The UI should reproduce or load this fixture and display its model/training metadata.
@@ -856,20 +888,24 @@ Work through the project in this order:
 6. [Complete] Add deterministic sampling, checkpoint loading, resume, and performance tracing.
 7. Build the basic generation and inspection UI.
 8. [Complete for the authored Stage 3 fixture] Freeze the byte-GPT config, dataset splits/hashes, seed, and evaluation prompts.
-9. Implement and visualize fixed patching.
-10. Add the local encoder, global transformer, and local decoder.
-11. Train the fixed-patch hierarchy end to end.
-12. Add the entropy model and dynamic patch boundaries.
-13. Run controlled baseline comparisons.
-14. Write the conclusions and limitations.
+9. [Complete for Alice v1] Harden Stage 4 with a hash-pinned external corpus, schedules/clipping, validation selection, resume, and a sealed test.
+10. Implement and visualize fixed patching.
+11. Add the local encoder, global transformer, and local decoder.
+12. Train the fixed-patch hierarchy end to end.
+13. Add the entropy model and dynamic patch boundaries.
+14. Run controlled baseline comparisons.
+15. Write the conclusions and limitations.
 
 ## Immediate milestone
 
 The next milestone should remain deliberately narrow:
 
-> Put the frozen Stage 3 checkpoint behind a simple byte-inspection UI, then harden Stage 4 with a larger external dataset and untouched test split.
+> Put the validation-selected Phase 4 checkpoint behind a simple byte-inspection UI, then implement the fixed-patch local/global/local architecture against the now-frozen byte-GPT control.
 
-The tiny overfit proof now succeeds. Do not make a BLT quality claim until the byte-GPT comparison data, seeds, prompts, and evaluation rules are frozen; otherwise baseline drift will be confounded with patching changes.
+The Phase 4 byte-GPT control is now frozen. Do not make a BLT quality claim
+until Stage 6 shares an explicitly versioned comparison contract and Stage 7
+defines its paired multi-seed protocol; the consumed Alice v1 test result must
+not become a tuning signal for later architectures.
 
 ## Definition of the three major finish lines
 
